@@ -40,6 +40,6 @@ All notable engineering upgrades and fixes for **PaySight** are recorded here.
   - Removed `generateOfflineMarkdown` regex fallback from `src/lib/ai/orchestrator.ts` (`/api/chat` returns `503` when `GOOGLE_GENERATIVE_AI_API_KEY` is missing).
   - Replaced `PayPalDemoCheckout.tsx` and simulated `ORD-DEMO-*`/`CAP-SIM-*`/`INV2-DEMO-*` flows with `PayPalSandboxCheckout.tsx` and fail-closed `503` PayPal config enforcement across orders, invoicing, and transactions.
   - Migrated `fetchTransactionsWithMeta()` to standard `fetch` + `getAccessToken()` matching `listInvoicesWithMeta()` and `listDisputes()`.
-- **Dashboard UX Polish**: Added Overview currency selector (`src/app/page.tsx`), loading skeleton for `NeedsAttention`, and `Cached` pill in `CompetitorPricingGrid`.
+- **Dashboard UX Polish**: Added Overview currency selector (`src/app/page.tsx`), loading skeleton for `NeedsAttention`, `Cached` pill in `CompetitorPricingGrid`, and replaced all generic `Sparkles`/`Bot` AI icons across 8 UI components with `MessageSquare` action triggers and a branded PaySight `P` `AssistantAvatar`.
 - **Report**: Added comprehensive [`FINAL_READINESS_REPORT.md`](./FINAL_READINESS_REPORT.md).
 

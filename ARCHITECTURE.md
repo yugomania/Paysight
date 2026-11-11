@@ -38,7 +38,7 @@ flowchart TD
         PP_API["paypal/api.ts (Chunked Search, KPIs, Invoices, Capture)"]
         BUD_SVC["budget/service.ts (Targets, Expenses, Cash Flow)"]
         C3_SVC["channel3/client.ts (POST /v1/search, 15m Cache, Benchmarks)"]
-        AI_SVC["ai/orchestrator.ts (9 Grounded Tools, Signature Bridge, Fallback)"]
+        AI_SVC["ai/orchestrator.ts (9 Grounded Tools, Signature Bridge, Model Failover)"]
         DB["db/index.ts (StoreRepository + Lockfile + Atomic Rename)"]
         FILE[(".data/paysight-db.json")]
     end
@@ -178,5 +178,5 @@ Untrusted fields returned by tools (`customer`, `product`, `note`, `retailer`, `
 
 - **Interface**: `StoreRepository` encapsulates transactions, invoices, processed webhook IDs, reconciled capture IDs, operating expenses, and monthly budget targets so an external SQL store can replace JSON storage without rewriting services. A deferred PostgreSQL/Neon schema and `AsyncStoreRepository` contract live in `db/migrations/001_init.sql` and `src/lib/db/postgres.deferred.ts`.
 - **Locking & Atomicity**: `withFileLock()` creates an exclusive `.lock` file (`O_EXCL` / `"wx"`) with stale-lock recovery (`> 5s`) and `Atomics.wait` backoff, then writes to `.tmp.<pid>.<uuid>` before `fs.renameSync`.
-- **Corruption Recovery**: Malformed JSON files are copied to `<dbFile>.corrupt.<timestamp>` before re-seeding instead of overwriting silently.
+- **Corruption Recovery**: Malformed JSON files are copied to `<dbFile>.corrupt.<timestamp>` before re-initializing an empty store instead of overwriting silently.
 

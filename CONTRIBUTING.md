@@ -10,7 +10,7 @@ cp .env.example .env.local
 npm run dev
 ```
 
-PaySight runs immediately in **Demo Mode** with `.env.local` left blank, or in **PayPal Sandbox Mode** once PayPal Sandbox keys are configured.
+PaySight requires **PayPal Sandbox** credentials in `.env.local` (plus Gemini and Channel3 keys for full AI Copilot and Pricing Radar endpoints); unconfigured integrations fail closed with HTTP `503`.
 
 ---
 
@@ -35,7 +35,7 @@ npm run build
 - **Next.js 16 Rules**: Review `node_modules/next/dist/docs/` before modifying Next.js configuration or App Router APIs (`AGENTS.md`).
 - **Financial Precision & Honesty**:
   - Never aggregate amounts across different currencies without an explicit FX conversion rate.
-  - Keep `demo_sample` records strictly separate from `paypal_sandbox` records.
+  - Keep `.data/paysight-db.json` free of synthetic/demo records and fail closed when live credentials are missing.
   - Never fabricate competitor listings, disputes, or payment links.
 - **Test Isolation**: All automated tests in `tests/*.test.ts` must set `process.env.PAYSIGHT_DB_PATH` to a temporary directory cleaned up in `t.after()` so local `.data/paysight-db.json` is never polluted.
 - **AI SDK Compatibility**: Keep `ai` (`4.x`), `@ai-sdk/google` (`1.x`), and `ai/react` aligned.
