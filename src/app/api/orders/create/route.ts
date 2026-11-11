@@ -6,6 +6,11 @@ import {
   extractPayPalSdkError,
 } from "@/lib/paypal/catalog";
 import {
+  checkRateLimit,
+  getClientIdentifier,
+  rateLimitExceededResponse,
+} from "@/lib/security/rate-limit";
+import {
   CheckoutPaymentIntent,
   PaypalWalletContextShippingPreference,
   PaypalExperienceUserAction,
@@ -26,6 +31,15 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const rl = checkRateLimit({
+    key: `orders-create:${getClientIdentifier(req)}`,
+    limit: 30,
+    windowMs: 60_000,
+  });
+  if (!rl.allowed) {
+    return rateLimitExceededResponse(rl);
+  }
+
   try {
     const body = await req.json().catch(() => ({}));
     const rawProductId =

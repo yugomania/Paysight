@@ -15,7 +15,7 @@ PaySight serves **PayPal merchants, digital sellers, and finance operators** who
 ## Product Overview & Core Features
 
 1. **PayPal Analytics & Settlement KPIs**:
-   - Server-calculated 30-day **Net Volume**, **Gross Volume**, **PayPal Fees**, **Settled Orders**, **Average Order Value (AOV)**, **Refunds**, and **Dispute Rate** with strict currency separation (`USD`, `EUR`, etc. are never summed together).
+   - Server-calculated 30-day **Net Volume**, **Gross Volume**, **PayPal Fees**, **Settled Orders**, **Average Order Value (AOV)**, **Refunds**, and **Dispute Rate** with strict currency separation (`USD`, `EUR`, etc. are never summed together) and an Overview currency selector.
    - Multi-currency summary strip for unconverted secondary currencies.
    - `7 Days` / `30 Days` / `90 Days` **Settlement Velocity** chart (`Recharts`) with computed half-over-half window trend badges.
    - **Needs Attention** banner surfacing open PayPal disputes and past-due unpaid invoices.
@@ -28,7 +28,7 @@ PaySight serves **PayPal merchants, digital sellers, and finance operators** who
    - Monthly sales targets and operating expense budgets per currency (`src/lib/budget/service.ts`, `/api/budget`).
    - Separates **PayPal Gross Sales**, **PayPal Processing Fees**, **Net PayPal Proceeds**, **Refunds**, and **Merchant-Recorded Operating Expenses** across 7 categories (`inventory`, `marketing`, `software`, `shipping`, `operations`, `taxes`, `other`), computing **Estimated Operating Cash Flow**, month-over-month comparisons, and budget alerts.
 5. **Channel3 Competitor Price Radar**:
-   - Multi-retailer price search (`https://api.trychannel3.com/v1`) with 15-minute bounded caching, exact vs. approximate match separation, floor/average/ceiling benchmarks, price position difference, and explicit `Channel3 Live` vs. `Demo Catalog Fallback` source badges. Live failures never fabricate prices.
+   - Multi-retailer price search (`POST https://api.trychannel3.com/v1/search`) with nested offer mapping, 15-minute bounded caching (and explicit `Cached` drilldown pill), exact vs. approximate match separation, floor/average/ceiling benchmarks, price position difference, and explicit `Channel3 Live` vs. `Demo Catalog Fallback` source badges. Live failures never fabricate prices.
 6. **Sandbox Checkout Terminal**:
    - Server-authoritative 4-SKU catalog (`demo_10` `$10`, `sub_pro` `$49`, `intel_add` `$29`, `exp_pack` `$19`).
    - Uses official `@paypal/react-paypal-js` popup approval + server capture verification in **PayPal Sandbox Mode**, and provides an explicit local simulation button in **Demo Mode**.
@@ -91,9 +91,10 @@ cp .env.example .env.local
 | `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | Required for live Checkout UI | Browser PayPal JS SDK client ID |
 | `PAYPAL_WEBHOOK_ID` | Required for `/api/webhooks/paypal` | Webhook ID configured in PayPal Developer Dashboard |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | Optional | Enables live Google Gemini streaming (`streamText`) |
-| `GEMINI_MODEL` | Optional (default `gemini-2.0-flash`) | Google Gemini model identifier |
+| `GEMINI_MODEL` | Optional (default `gemini-3.5-flash`) | Google Gemini model identifier (automatically fails over past retired models) |
 | `CHANNEL3_API_KEY` | Optional | Enables live Channel3 product comparisons |
 | `PAYSIGHT_DB_PATH` | Optional | Overrides `.data/paysight-db.json` path (used automatically by tests) |
+| `DATABASE_URL` | Deferred / Optional | Reserved for deferred PostgreSQL/Neon adapter (`db/migrations/001_init.sql`) |
 
 ### 4. Run Locally
 
@@ -110,7 +111,7 @@ Open [http://localhost:3000](http://localhost:3000).
 ## Testing & Quality Gates
 
 ```bash
-npm test            # Runs all 7 node:test suites cleanly in isolated temp DBs
+npm test            # Runs all 8 node:test suites (40 isolated tests)
 npm run lint        # ESLint 9 checks
 npx tsc --noEmit    # Strict TypeScript check
 npm run build       # Production Next.js build (requires internet access for Google Fonts)
@@ -124,13 +125,14 @@ A Render web-service blueprint is defined in [`render.yaml`](./render.yaml):
 
 - **Build command**: `npm ci && npm run build`
 - **Start command**: `npm start`
-- **Important Persistence Caveat**: On Render's Free plan, the container filesystem is ephemeral; `.data/paysight-db.json` resets across restarts/deploys unless you attach persistent storage or implement a database adapter behind `StoreRepository` (`src/lib/db/index.ts`).
+- **Health check**: `GET /api/health` (non-sensitive operational readiness, persistence mode, and integration configuration booleans)
+- **Important Persistence Caveat**: On Render's Free plan, the container filesystem is ephemeral; `.data/paysight-db.json` resets across restarts/deploys unless you attach persistent storage or complete the deferred PostgreSQL/Neon adapter ([`db/migrations/001_init.sql`](./db/migrations/001_init.sql), [`src/lib/db/postgres.deferred.ts`](./src/lib/db/postgres.deferred.ts)).
 
 ---
 
 ## Security Notes & Known Limitations
 
-- **Single-Workspace Prototype (No User Login)**: PaySight currently does not include end-user login/session authentication or multi-tenant isolation. Do not expose a deployment holding real customer/merchant data publicly without adding authentication and rate limiting first. See [`SECURITY.md`](./SECURITY.md).
+- **Single-Workspace Prototype (No User Login)**: PaySight currently does not include end-user login/session authentication or multi-tenant isolation. Per-IP sliding-window rate limiting (`src/lib/security/rate-limit.ts`) and baseline HTTP security headers (`next.config.ts`) are active for single-instance hosting, but do not expose a deployment holding real customer/merchant PII publicly without adding authentication and shared storage first. See [`SECURITY.md`](./SECURITY.md).
 - **PayPal Sandbox Permissions**: Live Transaction Search and Customer Disputes require explicit feature toggles in your PayPal Sandbox Developer App; if disabled, PaySight discloses the limitation honestly via warning banners.
 - **Channel3 Unconfigured Fallback**: When `CHANNEL3_API_KEY` is unset, comparisons return sample/demo reference listings clearly tagged `Demo` (`isSimulated: true`). When `CHANNEL3_API_KEY` is configured and fails or returns empty, PaySight returns `0` listings rather than inventing competitor prices.
 - **Standalone Payment Links**: Synthetic PayPal payment links were removed; use PayPal Invoicing v2 (`paymentUrl` generated once sent in Sandbox).

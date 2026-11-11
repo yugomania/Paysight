@@ -28,3 +28,13 @@ All notable engineering upgrades and fixes for **PaySight** are recorded here.
 - Removed 6 unused npm dependencies (`@paypal/agent-toolkit`, `@ai-sdk/openai`, `@ai-sdk/react`, `zustand`, `ag-grid-enterprise`, `axios`).
 - Updated `.env.example`, `render.yaml`, `README.md`, and created `AUDIT_REPORT.md`, `PROJECT_CONTEXT.md`, `ARCHITECTURE.md`, `SECURITY.md`, `CONTRIBUTING.md`, and Hackathon submission docs.
 
+### Final Production & Live Integration Readiness Pass
+- **Operational Readiness & Rate Limiting** (`src/app/api/health/route.ts`, `src/lib/security/rate-limit.ts`, `next.config.ts`, `render.yaml`): Added `GET /api/health` telemetry (no secret exposure), Render health check path, baseline HTTP security headers, and sliding-window per-IP rate limits on `/api/chat`, `/api/pricing`, `/api/orders/*`, `/api/invoices` POST, and `/api/budget` POST.
+- **Deferred PostgreSQL/Neon Blueprint** (`db/migrations/001_init.sql`, `src/lib/db/postgres.deferred.ts`): Added idempotent SQL schema and async repository interface design without breaking synchronous local JSON storage or Demo Mode.
+- **Live Upstream Integration Fixes Verified Outside Sandbox**:
+  - Updated Channel3 client (`src/lib/channel3/client.ts`) to `POST https://api.trychannel3.com/v1/search` and parse nested `offers[]`/`brands[]`/`images[]` structures alongside flat test fixtures.
+  - Updated Gemini orchestrator (`src/lib/ai/orchestrator.ts`) with a streaming `thoughtSignature` passthrough `fetch` bridge for Gemini 3.x multi-step tool calling (`ai@4.3.19` + `@ai-sdk/google@1.2.22`) and automatic failover across `gemini-3.5-flash` / `gemini-3-flash-preview` / `gemini-3.5-flash-lite` past retired `gemini-2.0-flash` / `gemini-2.5-flash`.
+  - Improved PayPal SDK `ApiError` body extraction (`extractPayPalSdkError`) and ensured `listInvoicesWithMeta()` / `GET /api/invoices` reports `dataSource: "demo_sample"` honestly when PayPal Invoicing returns `403 NOT_AUTHORIZED`.
+- **Dashboard UX Polish**: Added Overview currency selector (`src/app/page.tsx`), loading skeleton for `NeedsAttention`, and `Cached` pill in `CompetitorPricingGrid`.
+- **Report**: Added comprehensive [`FINAL_READINESS_REPORT.md`](./FINAL_READINESS_REPORT.md).
+

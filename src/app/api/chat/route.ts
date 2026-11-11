@@ -1,9 +1,23 @@
 import { createChatStream } from "@/lib/ai/orchestrator";
 import type { ChatMessage } from "@/lib/ai/orchestrator";
+import {
+  checkRateLimit,
+  getClientIdentifier,
+  rateLimitExceededResponse,
+} from "@/lib/security/rate-limit";
 
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
+  const rl = checkRateLimit({
+    key: `chat:${getClientIdentifier(req)}`,
+    limit: 20,
+    windowMs: 60_000,
+  });
+  if (!rl.allowed) {
+    return rateLimitExceededResponse(rl);
+  }
+
   try {
     const body = await req.json().catch(() => null);
     const messages = body?.messages;

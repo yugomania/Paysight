@@ -21,24 +21,27 @@ PaySight (`paysight` `v0.1.0` / UI `PaySight v2.0`) is a Next.js 16 merchant int
 ## 3. Architecture & Key File Locations
 - `src/types/index.ts` — Domain models (`Transaction`, `MerchantKPIs`, `Invoice`, `Dispute`, `PricingComparison`, `MerchantExpense`, `MonthlyBudgetTarget`, `BudgetSummary`).
 - `src/lib/db/index.ts` — `StoreRepository` interface, cross-process `.lock` file serialization, `randomUUID()` temp writes, `.corrupt.*` backup preservation, and deterministic demo seeds.
+- `src/lib/db/postgres.deferred.ts` & `db/migrations/001_init.sql` — Deferred PostgreSQL/Neon schema and `AsyncStoreRepository` contract ready to replace `.data/paysight-db.json` when multi-instance / durable cloud persistence is prioritized.
+- `src/lib/security/rate-limit.ts` — Sliding-window per-IP rate limiter protecting AI, Channel3 pricing, checkout, invoicing, and budget write endpoints.
 - `src/lib/paypal/client.ts` — PayPal SDK singleton (keyed by credentials/env), OAuth token cache, `hasValidPayPalConfig()`, fail-closed `verifyWebhookSignatureDetailed()`.
-- `src/lib/paypal/catalog.ts` — Authoritative `SANDBOX_PRODUCTS` (`demo_10`, `sub_pro`, `intel_add`, `exp_pack`) and `extractPayPalSdkError()`.
-- `src/lib/paypal/api.ts` — `buildDateChunks()` (`<=30d`), paginated `fetchTransactionsWithMeta()`, currency-isolated `computeMerchantKPIs()`/`getMerchantKPIs()`, `getRevenueTimeSeries()`, PayPal Invoicing v2 CRUD (`prepareInvoiceProposal`, `createInvoice`, `sendDraftInvoice`, `cancelExistingInvoice`), `listDisputes()`, `captureServerSideOrder()`.
+- `src/lib/paypal/catalog.ts` — Authoritative `SANDBOX_PRODUCTS` (`demo_10`, `sub_pro`, `intel_add`, `exp_pack`) and `extractPayPalSdkError()` (extracting SDK `result` and JSON `body` details cleanly).
+- `src/lib/paypal/api.ts` — `buildDateChunks()` (`<=30d`), paginated `fetchTransactionsWithMeta()`, currency-isolated `computeMerchantKPIs()`/`getMerchantKPIs()`, `getRevenueTimeSeries()`, PayPal Invoicing v2 CRUD (`listInvoicesWithMeta`, `prepareInvoiceProposal`, `createInvoice`, `sendDraftInvoice`, `cancelExistingInvoice`), `listDisputes()`, `captureServerSideOrder()`.
 - `src/lib/budget/service.ts` — `computeBudgetSummaryFromRecords()`, `getBudgetSummary()`, `recordMerchantExpense()`, `updateMonthlyBudgetTarget()`, `removeMerchantExpense()`.
-- `src/lib/channel3/client.ts` — `searchProductsWithMeta()`, `getPricingComparison()`, bounded 15-min cache, honest empty/error handling in live mode vs. explicit demo fallback.
-- `src/lib/ai/orchestrator.ts` — `SYSTEM_PROMPT`, `sanitizeUntrustedField()`, 9 grounded tools (`paysightTools`), `createChatStream()`, `generateOfflineMarkdown()`.
-- `src/app/api/*` — Route handlers: `transactions`, `orders/create`, `orders/capture`, `invoices`, `disputes`, `pricing`, `budget`, `chat`, `webhooks/paypal`.
-- `src/app/page.tsx` & `src/components/` — 7-tab SPA (`overview`, `transactions`, `invoices`, `budget`, `pricing`, `disputes`, `checkout`) + `ChatPanel` drawer (`Cmd+J`, `Cmd+K` search).
+- `src/lib/channel3/client.ts` — `searchProductsWithMeta()` (`POST https://api.trychannel3.com/v1/search` with nested `offers[]` + flat fixture support), `getPricingComparison()`, bounded 15-min cache, honest empty/error handling in live mode vs. explicit demo fallback.
+- `src/lib/ai/orchestrator.ts` — `SYSTEM_PROMPT`, `sanitizeUntrustedField()`, 9 grounded tools (`paysightTools`), Gemini 3.x `thoughtSignature` passthrough `fetch` bridge + retired/quota model failover (`gemini-3.5-flash` -> `gemini-3-flash-preview` -> `gemini-3.5-flash-lite`), `createChatStream()`, `generateOfflineMarkdown()`.
+- `src/app/api/*` — Route handlers: `health`, `transactions`, `orders/create`, `orders/capture`, `invoices`, `disputes`, `pricing`, `budget`, `chat`, `webhooks/paypal`.
+- `src/app/page.tsx` & `src/components/` — 7-tab SPA (`overview` with currency selector, `transactions`, `invoices`, `budget`, `pricing`, `disputes`, `checkout`) + `ChatPanel` drawer (`Cmd+J`, `Cmd+K` search).
 
 ## 4. Critical Business Logic & Invariants
-1. **Strict Demo vs. Sandbox Separation**: When `hasValidPayPalConfig()` is true and PayPal APIs succeed, `demo_sample` seed transactions/invoices are excluded from live Sandbox counts.
-2. **Strict Currency Isolation**: KPIs, revenue charts, and monthly budgets filter by a single target currency (`USD` default) and never sum heterogeneous currencies.
+1. **Strict Demo vs. Sandbox Separation**: When `hasValidPayPalConfig()` is true and PayPal APIs succeed, `demo_sample` seed transactions/invoices are excluded from live Sandbox counts; HTTP 403/failed PayPal API calls report `isLive: false` / `dataSource: "demo_sample"` honestly rather than mislabeling local records as live.
+2. **Strict Currency Isolation**: KPIs, revenue charts, Overview KPI currency selector, and monthly budgets filter by a single target currency (`USD` default) and never sum heterogeneous currencies.
 3. **Fail-Closed Webhooks**: `/api/webhooks/paypal` requires all 5 `paypal-*` headers and `PAYPAL_WEBHOOK_ID` + valid PayPal API verification; `INVOICING.INVOICE.*` events merge status updates while preserving existing line items.
 4. **Two-Step Invoice Safety**: HTTP `POST /api/invoices` requires a SHA-256 `confirmationToken` from `validate_proposal`; `autoSend: true` always requires matching token verification.
 5. **Test Isolation**: Every `tests/*.test.ts` suite sets `PAYSIGHT_DB_PATH` to an `os.tmpdir()` folder cleaned up in `t.after()` so `.data/paysight-db.json` is never polluted.
 
 ## 5. Known Limitations & Next Priorities
-- **No user auth / multi-tenancy**: Single-merchant local workspace; add auth + rate limiting before multi-user or public production hosting.
-- **Ephemeral file persistence on Render Free**: Replace `jsonStoreRepository` with a Postgres/Neon implementation of `StoreRepository` for durable cloud deployments.
+- **No user auth / multi-tenancy**: Single-merchant workspace without end-user login/RBAC; process-local rate limiting is in place, but add auth + external store before public multi-user production hosting.
+- **Ephemeral file persistence on Render Free**: Replace `jsonStoreRepository` with an async adapter matching `db/migrations/001_init.sql` (`src/lib/db/postgres.deferred.ts`) for durable multi-deploy cloud state.
+- **PayPal Sandbox App Permissions**: On the current local Sandbox app, Disputes (`v1/customer/disputes`) and Orders v2 (`v2/checkout/orders`) return live HTTP 200/201 responses, whereas Transaction Search (`/v1/reporting/transactions`) and Invoicing (`/v2/invoicing/invoices`) require enabling those feature checkboxes in PayPal Developer Dashboard (otherwise returning `403 NOT_AUTHORIZED` and falling back honestly).
 - **Google Fonts build network requirement**: `next build` requires outbound network to `fonts.googleapis.com` for `Geist` / `Geist_Mono`.
 

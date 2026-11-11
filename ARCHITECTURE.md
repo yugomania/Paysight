@@ -19,6 +19,7 @@ flowchart TD
     end
 
     subgraph API["Next.js 16 Route Handlers (src/app/api/)"]
+        R_HLTH["GET /api/health"]
         R_TXN["GET /api/transactions"]
         R_ORD_C["GET/POST /api/orders/create"]
         R_ORD_P["POST /api/orders/capture"]
@@ -31,12 +32,13 @@ flowchart TD
     end
 
     subgraph Services["Domain Services (src/lib/)"]
+        RL["security/rate-limit.ts (Sliding-Window Per-IP Quotas)"]
         PP_CLI["paypal/client.ts (SDK, OAuth Cache, Webhook Verify)"]
         PP_CAT["paypal/catalog.ts (Authoritative SKUs & Error Parser)"]
         PP_API["paypal/api.ts (Chunked Search, KPIs, Invoices, Capture)"]
         BUD_SVC["budget/service.ts (Targets, Expenses, Cash Flow)"]
-        C3_SVC["channel3/client.ts (Search, 15m Cache, Benchmarks)"]
-        AI_SVC["ai/orchestrator.ts (9 Grounded Tools + Offline Fallback)"]
+        C3_SVC["channel3/client.ts (POST /v1/search, 15m Cache, Benchmarks)"]
+        AI_SVC["ai/orchestrator.ts (9 Grounded Tools, Signature Bridge, Fallback)"]
         DB["db/index.ts (StoreRepository + Lockfile + Atomic Rename)"]
         FILE[(".data/paysight-db.json")]
     end
@@ -48,12 +50,13 @@ flowchart TD
     end
 
     PAGE --> NAV & OV & TXN & INV & BUD & PRC & CHK & AI_UI
+    R_HLTH --> DB
     R_TXN & R_INV & R_DISP & R_ORD_P --> PP_API
     R_ORD_C --> PP_CLI & PP_CAT
     R_ORD_P --> PP_CAT
-    R_PRIC --> C3_SVC
-    R_BUD --> BUD_SVC
-    R_CHAT --> AI_SVC
+    R_PRIC --> RL & C3_SVC
+    R_BUD --> RL & BUD_SVC
+    R_CHAT --> RL & AI_SVC
     R_WH --> PP_CLI & DB
 
     PP_API --> PP_CLI & PP_CAT & DB
@@ -176,7 +179,7 @@ Untrusted fields returned by tools (`customer`, `product`, `note`, `retailer`, `
 
 ## 6. Persistence & Concurrency Design (`src/lib/db/index.ts`)
 
-- **Interface**: `StoreRepository` encapsulates transactions, invoices, processed webhook IDs, reconciled capture IDs, operating expenses, and monthly budget targets so an external SQL store can replace JSON storage without rewriting services.
+- **Interface**: `StoreRepository` encapsulates transactions, invoices, processed webhook IDs, reconciled capture IDs, operating expenses, and monthly budget targets so an external SQL store can replace JSON storage without rewriting services. A deferred PostgreSQL/Neon schema and `AsyncStoreRepository` contract live in `db/migrations/001_init.sql` and `src/lib/db/postgres.deferred.ts`.
 - **Locking & Atomicity**: `withFileLock()` creates an exclusive `.lock` file (`O_EXCL` / `"wx"`) with stale-lock recovery (`> 5s`) and `Atomics.wait` backoff, then writes to `.tmp.<pid>.<uuid>` before `fs.renameSync`.
 - **Corruption Recovery**: Malformed JSON files are copied to `<dbFile>.corrupt.<timestamp>` before re-seeding instead of overwriting silently.
 

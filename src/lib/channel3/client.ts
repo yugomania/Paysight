@@ -51,16 +51,110 @@ export function hasValidChannel3Config(): boolean {
 
 // ─── Matching & Categorization Helpers ───────────────────────────────────────
 
-function checkExactMatch(query: string, candidateTitle: string): boolean {
+function checkExactMatch(query: string, candidateTitle: string, brandName?: string): boolean {
   const qTokens = query
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, " ")
     .split(/\s+/)
     .filter((t) => t.length > 1);
   if (qTokens.length === 0) return false;
-  const cTitle = candidateTitle.toLowerCase();
+  const cTitle = `${brandName ? `${brandName} ` : ""}${candidateTitle}`.toLowerCase();
   const matches = qTokens.filter((token) => cTitle.includes(token));
   return matches.length >= Math.min(qTokens.length, 3);
+}
+
+function mapChannel3ProductRecords(
+  rawProducts: unknown,
+  cleanQuery: string,
+  nowStr: string
+): CompetitorProduct[] {
+  if (!Array.isArray(rawProducts)) return [];
+  const results: CompetitorProduct[] = [];
+
+  for (const item of rawProducts) {
+    if (!item || typeof item !== "object") continue;
+    const p = item as Record<string, unknown>;
+    const rawTitle = String(p.title || p.name || "").trim();
+    if (!rawTitle) continue;
+
+    const brands = Array.isArray(p.brands) ? (p.brands as Array<Record<string, unknown>>) : [];
+    const brandName = typeof brands[0]?.name === "string" ? brands[0].name.trim() : "";
+    const fullTitle =
+      brandName && !rawTitle.toLowerCase().includes(brandName.toLowerCase())
+        ? `${brandName} ${rawTitle}`
+        : rawTitle;
+    const isExact = checkExactMatch(cleanQuery, rawTitle, brandName);
+
+    const images = Array.isArray(p.images) ? (p.images as Array<Record<string, unknown>>) : [];
+    const mainImg =
+      images.find((img) => img.is_main_image) ?? images[0];
+    const imageUrl =
+      (typeof mainImg?.cleaned_url === "string" && mainImg.cleaned_url) ||
+      (typeof mainImg?.url === "string" && mainImg.url) ||
+      (typeof p.image_url === "string" ? p.image_url : undefined);
+
+    const offers = Array.isArray(p.offers) ? (p.offers as Array<Record<string, unknown>>) : [];
+    if (offers.length > 0) {
+      for (const offer of offers) {
+        const priceObj =
+          offer.price && typeof offer.price === "object"
+            ? (offer.price as Record<string, unknown>)
+            : null;
+        const priceVal = parseFloat(String(priceObj?.price ?? offer.price ?? "0"));
+        if (!Number.isFinite(priceVal) || priceVal <= 0) continue;
+
+        const currency = String(priceObj?.currency ?? offer.currency ?? "USD").toUpperCase();
+        const domain = String(
+          offer.domain || offer.merchant || offer.retailer || p.retailer || p.store || "Retailer"
+        ).trim();
+        const availabilityStr = String(offer.availability ?? "");
+        const inStock =
+          availabilityStr
+            ? !availabilityStr.toLowerCase().includes("outofstock") &&
+              !availabilityStr.toLowerCase().includes("out_of_stock")
+            : offer.in_stock !== false;
+        const rawCondition = String(offer.condition ?? p.condition ?? "new").toLowerCase();
+        const condition: CompetitorProduct["condition"] =
+          rawCondition === "refurbished" || rawCondition === "used" ? rawCondition : "new";
+
+        results.push({
+          productName: fullTitle,
+          retailer: domain,
+          price: parseFloat(priceVal.toFixed(2)),
+          currency,
+          url: String(
+            offer.url || p.url || `https://www.google.com/search?q=${encodeURIComponent(fullTitle)}`
+          ),
+          inStock,
+          imageUrl,
+          condition,
+          retrievalTime: nowStr,
+          isExactMatch: isExact,
+          matchConfidence: isExact ? "exact" : "approximate",
+        });
+      }
+      continue;
+    }
+
+    // Flat schema fallback (supported for direct product fixtures)
+    const flatPrice = parseFloat(String(p.price ?? "0"));
+    if (!Number.isFinite(flatPrice) || flatPrice <= 0) continue;
+    results.push({
+      productName: fullTitle,
+      retailer: String(p.retailer || p.store || p.merchant_domain || "Retailer"),
+      price: parseFloat(flatPrice.toFixed(2)),
+      currency: String(p.currency || "USD").toUpperCase(),
+      url: String(p.url || `https://www.google.com/search?q=${encodeURIComponent(fullTitle)}`),
+      inStock: p.in_stock !== false,
+      imageUrl,
+      condition: (p.condition as "new" | "refurbished" | "used") || "new",
+      retrievalTime: nowStr,
+      isExactMatch: isExact,
+      matchConfidence: isExact ? "exact" : "approximate",
+    });
+  }
+
+  return results.slice(0, 15);
 }
 
 export interface SearchResultMeta {
@@ -97,12 +191,16 @@ export async function searchProductsWithMeta(
   if (hasLiveKey) {
     const apiKey = process.env.CHANNEL3_API_KEY!.trim();
     try {
-      const res = await fetch(
-        `${BASE_URL}/products/search?q=${encodeURIComponent(cleanQuery)}&limit=10`,
-        {
-          headers: { "x-api-key": apiKey, Accept: "application/json" },
-        }
-      );
+      const res = await fetch(`${BASE_URL}/search`, {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ query: cleanQuery, limit: 10 }),
+        signal: AbortSignal.timeout(8000),
+      });
 
       if (!res.ok) {
         return {
@@ -115,31 +213,10 @@ export async function searchProductsWithMeta(
       }
 
       const data = await res.json();
-      const rawProducts = data.products ?? data.items ?? [];
-      const products: CompetitorProduct[] = (Array.isArray(rawProducts) ? rawProducts : [])
-        .map((p: Record<string, unknown>): CompetitorProduct | null => {
-          const title = String(p.name || p.title || "").trim();
-          const price = parseFloat(String(p.price ?? "0"));
-          if (!title || !Number.isFinite(price) || price <= 0) return null;
-          const isExact = checkExactMatch(cleanQuery, title);
-          return {
-            productName: title,
-            retailer: String(p.retailer || p.store || "Retailer"),
-            price: parseFloat(price.toFixed(2)),
-            currency: String(p.currency || "USD").toUpperCase(),
-            url: String(
-              p.url || `https://www.google.com/search?q=${encodeURIComponent(title)}`
-            ),
-            inStock: p.in_stock !== false,
-            imageUrl: typeof p.image_url === "string" ? p.image_url : undefined,
-            condition:
-              (p.condition as "new" | "refurbished" | "used") || "new",
-            retrievalTime: nowStr,
-            isExactMatch: isExact,
-            matchConfidence: isExact ? "exact" : "approximate",
-          };
-        })
-        .filter((item): item is CompetitorProduct => item !== null);
+      const rawProducts = Array.isArray(data)
+        ? data
+        : data.products ?? data.items ?? data.results ?? [];
+      const products = mapChannel3ProductRecords(rawProducts, cleanQuery, nowStr);
 
       const liveMeta: SearchResultMeta = {
         products,

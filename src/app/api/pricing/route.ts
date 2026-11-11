@@ -1,7 +1,21 @@
 import { getPricingComparison } from "@/lib/channel3/client";
+import {
+  checkRateLimit,
+  getClientIdentifier,
+  rateLimitExceededResponse,
+} from "@/lib/security/rate-limit";
 import { NextRequest } from "next/server";
 
 export async function GET(req: NextRequest) {
+  const rl = checkRateLimit({
+    key: `pricing:${getClientIdentifier(req)}`,
+    limit: 40,
+    windowMs: 60_000,
+  });
+  if (!rl.allowed) {
+    return rateLimitExceededResponse(rl);
+  }
+
   const { searchParams } = new URL(req.url);
   const product = searchParams.get("product")?.trim() ?? "";
   const rawPrice = searchParams.get("price") ?? "0";

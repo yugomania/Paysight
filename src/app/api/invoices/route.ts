@@ -1,21 +1,25 @@
 import { NextRequest } from "next/server";
 import {
-  listInvoices,
+  listInvoicesWithMeta,
   createInvoice,
   prepareInvoiceProposal,
   sendDraftInvoice,
   cancelExistingInvoice,
 } from "@/lib/paypal/api";
-import { hasValidPayPalConfig } from "@/lib/paypal/client";
+import {
+  checkRateLimit,
+  getClientIdentifier,
+  rateLimitExceededResponse,
+} from "@/lib/security/rate-limit";
 
 export async function GET() {
   try {
-    const invoices = await listInvoices();
-    const isLive = hasValidPayPalConfig();
+    const result = await listInvoicesWithMeta();
     return Response.json({
-      invoices,
-      isLive,
-      dataSource: isLive ? "paypal_sandbox" : "demo_sample",
+      invoices: result.invoices,
+      isLive: result.isLive,
+      dataSource: result.dataSource,
+      note: result.note,
     });
   } catch (err) {
     console.error("[/api/invoices] GET error:", err);
@@ -24,6 +28,15 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const rl = checkRateLimit({
+    key: `invoices-post:${getClientIdentifier(req)}`,
+    limit: 30,
+    windowMs: 60_000,
+  });
+  if (!rl.allowed) {
+    return rateLimitExceededResponse(rl);
+  }
+
   try {
     const body = await req.json();
 

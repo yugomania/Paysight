@@ -48,6 +48,7 @@ export default function DashboardPage() {
   const [disputeMessage, setDisputeMessage] = useState<string>("");
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [dateRange, setDateRange] = useState<DateRangeOption>("30d");
+  const [selectedCurrency, setSelectedCurrency] = useState<string>("USD");
 
   const [loadingTxns, setLoadingTxns] = useState(true);
   const [loadingKpis, setLoadingKpis] = useState(true);
@@ -79,7 +80,7 @@ export default function DashboardPage() {
       })
       .finally(() => setLoadingTxns(false));
 
-    const kpiReq = fetch("/api/transactions?type=kpis")
+    const kpiReq = fetch(`/api/transactions?type=kpis&currency=${encodeURIComponent(selectedCurrency)}`)
       .then((res) => res.json())
       .then((data) => {
         if (data && !data.error) {
@@ -90,7 +91,7 @@ export default function DashboardPage() {
       .catch((err) => console.error("KPIs fetch error:", err))
       .finally(() => setLoadingKpis(false));
 
-    const revReq = fetch(`/api/transactions?type=revenue&days=${days}`)
+    const revReq = fetch(`/api/transactions?type=revenue&days=${days}&currency=${encodeURIComponent(selectedCurrency)}`)
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data)) setRevenueData(data);
@@ -116,7 +117,7 @@ export default function DashboardPage() {
     await Promise.allSettled([txnReq, kpiReq, revReq, invReq, dispReq]);
     setBudgetRefreshSignal((n) => n + 1);
     setIsRefreshing(false);
-  }, [dateRange]);
+  }, [dateRange, selectedCurrency]);
 
   const fetchPricingData = useCallback((forceRefresh = false) => {
     if (!forceRefresh && comparisons.length > 0) return;
@@ -275,10 +276,34 @@ export default function DashboardPage() {
                       Server-calculated performance metrics and settlement velocity
                     </p>
                   </div>
-                  <span className="text-xs font-mono text-[#626262]">
-                    {kpis?.reportingPeriod || "Last 30 days"} • Timezone:{" "}
-                    {kpis?.reportingTimezone || "UTC"} • Currency: {kpis?.currency || "USD"}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2.5 text-xs font-mono text-[#626262]">
+                    <span>
+                      {kpis?.reportingPeriod || "Last 30 days"} • {kpis?.reportingTimezone || "UTC"}
+                    </span>
+                    <label className="sr-only" htmlFor="overview-currency">
+                      Reporting Currency
+                    </label>
+                    <select
+                      id="overview-currency"
+                      value={selectedCurrency}
+                      onChange={(e) => setSelectedCurrency(e.target.value)}
+                      className="bg-white border border-[#E5E5E5] rounded-md px-2 py-1 text-xs font-mono text-[#171717] focus:outline-none focus:border-[#C2410C]"
+                    >
+                      {Array.from(
+                        new Set([
+                          "USD",
+                          "EUR",
+                          "GBP",
+                          "CAD",
+                          ...Object.keys(kpis?.currencyTotals ?? {}),
+                        ])
+                      ).map((code) => (
+                        <option key={code} value={code}>
+                          {code}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 <KPICards kpis={kpis} loading={loadingKpis} />
@@ -287,11 +312,11 @@ export default function DashboardPage() {
                   data={revenueData}
                   loading={loadingRevenue}
                   dateRange={dateRange}
-                  currency={kpis?.currency || "USD"}
+                  currency={selectedCurrency}
                   onDateRangeChange={setDateRange}
                   onExplainTrend={() =>
                     openChatWithPrompt(
-                      `Explain my settlement revenue trend for the last ${dateRange} in ${kpis?.currency || "USD"}. Detail velocity, refund impacts, and fees.`
+                      `Explain my settlement revenue trend for the last ${dateRange} in ${selectedCurrency}. Detail velocity, refund impacts, and fees.`
                     )
                   }
                 />
@@ -301,6 +326,7 @@ export default function DashboardPage() {
                 disputes={disputes}
                 invoices={invoices}
                 isLiveConnected={isLiveConnected}
+                loading={loadingKpis}
                 onNavigateToDisputes={() => setActiveTab("disputes")}
                 onNavigateToInvoices={() => setActiveTab("invoices")}
               />

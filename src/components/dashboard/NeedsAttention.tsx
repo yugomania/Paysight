@@ -7,6 +7,7 @@ interface NeedsAttentionProps {
   disputes: Dispute[];
   invoices: Invoice[];
   isLiveConnected: boolean;
+  loading?: boolean;
   onNavigateToDisputes: () => void;
   onNavigateToInvoices: () => void;
 }
@@ -15,6 +16,7 @@ export function NeedsAttention({
   disputes,
   invoices,
   isLiveConnected,
+  loading = false,
   onNavigateToDisputes,
   onNavigateToInvoices,
 }: NeedsAttentionProps) {
@@ -51,7 +53,9 @@ export function NeedsAttention({
         <span className="text-xs text-[#626262]">PayPal Sandbox &amp; Store Ledger</span>
       </div>
 
-      {hasItems ? (
+      {loading ? (
+        <div className="h-12 rounded-lg bg-[#F7F7F8] animate-pulse border border-[#E5E5E5]" />
+      ) : hasItems ? (
         <div className="space-y-2.5">
           {/* Dispute Action Item */}
           {openDisputes.length > 0 && (

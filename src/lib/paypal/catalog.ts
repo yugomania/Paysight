@@ -62,9 +62,16 @@ export function extractPayPalSdkError(
 
   if (err && typeof err === "object") {
     const sdkErr = err as Record<string, unknown>;
-    const result = sdkErr.result as Record<string, unknown> | undefined;
+    let result = sdkErr.result as Record<string, unknown> | undefined;
+    if (!result && typeof sdkErr.body === "string" && sdkErr.body.trim().startsWith("{")) {
+      try {
+        result = JSON.parse(sdkErr.body) as Record<string, unknown>;
+      } catch {
+        // Ignore unparseable body
+      }
+    }
     const headers = sdkErr.headers as Record<string, string> | undefined;
-    debugId = headers?.["paypal-debug-id"];
+    debugId = headers?.["paypal-debug-id"] ?? (typeof result?.debug_id === "string" ? result.debug_id : undefined);
 
     if (result?.error_description && typeof result.error_description === "string") {
       message = `${String(result.error ?? "error")}: ${result.error_description}`;
@@ -74,7 +81,12 @@ export function extractPayPalSdkError(
       if (details?.[0]?.issue) {
         message = `${details[0].issue}: ${details[0].description ?? result.message}`;
       }
-    } else if (sdkErr.message && typeof sdkErr.message === "string" && sdkErr.message.trim()) {
+    } else if (
+      sdkErr.message &&
+      typeof sdkErr.message === "string" &&
+      sdkErr.message.trim() &&
+      sdkErr.message.trim() !== "The error response."
+    ) {
       message = sdkErr.message;
     } else if (typeof sdkErr.statusCode === "number") {
       message = `PayPal API error (HTTP ${sdkErr.statusCode})`;

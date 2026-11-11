@@ -78,7 +78,55 @@ test("Channel3 Market Comparisons: live transparency, matching, and benchmarks",
       assert.equal(liveComp.competitorCount, 2);
       assert.equal(liveComp.marketAvgPrice, 97.49);
 
-      // Case 2: Live API fails (HTTP 502) -> must NOT fabricate mock catalog entries
+      // Case 2: Live Channel3 POST /v1/search nested offers[] schema
+      clearPricingCache();
+      let capturedMethod = "";
+      let capturedUrl = "";
+      globalThis.fetch = async (url, init) => {
+        capturedUrl = String(url);
+        capturedMethod = init?.method || "GET";
+        return new Response(
+          JSON.stringify({
+            products: [
+              {
+                id: "hrz4MAW",
+                title: "WH-1000XM5 Over-Ear Noise Cancelling Bluetooth Headphones",
+                brands: [{ id: "PURH", name: "Sony" }],
+                images: [{ url: "https://cdn.example.com/sony.jpg", is_main_image: true }],
+                offers: [
+                  {
+                    url: "https://buy.example.com/1",
+                    domain: "selfridges.com",
+                    price: { price: 340, currency: "USD" },
+                    availability: "InStock",
+                    condition: "new",
+                  },
+                  {
+                    url: "https://buy.example.com/2",
+                    domain: "6ave.com",
+                    price: { price: 398, currency: "USD" },
+                    availability: "InStock",
+                    condition: "new",
+                  },
+                ],
+              },
+            ],
+          }),
+          { status: 200 }
+        );
+      };
+
+      const nestedComp = await getPricingComparison("Sony WH-1000XM5 Headphones", 299.99);
+      assert.equal(capturedMethod, "POST");
+      assert.ok(capturedUrl.endsWith("/v1/search"));
+      assert.equal(nestedComp.isSimulated, false);
+      assert.equal(nestedComp.competitorCount, 2);
+      assert.equal(nestedComp.exactMatchesCount, 2);
+      assert.equal(nestedComp.marketMinPrice, 340);
+      assert.equal(nestedComp.marketMaxPrice, 398);
+      assert.equal(nestedComp.competitors[0].retailer, "selfridges.com");
+
+      // Case 3: Live API fails (HTTP 502) -> must NOT fabricate mock catalog entries
       clearPricingCache();
       globalThis.fetch = async () => new Response("Bad Gateway", { status: 502 });
       const errComp = await getPricingComparison("Logitech MX Master 3S", 89.99);

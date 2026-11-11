@@ -23,8 +23,9 @@ npm run build
 | `tests/budget.test.ts` | Gross/fee/net/refund/manual expense math, currency isolation, budget statuses/alerts, target updates, expense validation & deletion, MoM comparison |
 | `tests/db_concurrency.test.ts` | Burst concurrent writes, batch writes, lockfile serialization, `.corrupt.*` backup recovery |
 | `tests/invoicing.test.ts` | Proposal field validation, SHA-256 confirmation mismatch, `autoSend` & HTTP token requirements, Draft -> Sent -> Cancelled lifecycle, concurrent lock rejection |
-| `tests/pricing.test.ts` | Demo simulated source labeling, live Channel3 response parsing, fail-honest empty/HTTP error behavior without price fabrication |
+| `tests/pricing.test.ts` | Demo simulated source labeling, live Channel3 `POST /v1/search` nested `offers[]` & flat fixture parsing, fail-honest empty/HTTP error behavior without price fabrication |
 | `tests/reconciliation_and_webhooks.test.ts` | Unknown SKU rejection, capture persistence & reconciliation flags, transaction deduplication, fail-closed `503`/`401` webhook gates, verified event handling, invoice line-item preservation, `PAID` downgrade prevention |
+| `tests/security_and_health.test.ts` | Sliding-window per-IP rate limiting (`429` + `Retry-After` on `/api/pricing`), non-sensitive `/api/health` readiness telemetry, and PostgreSQL schema coverage (`db/migrations/001_init.sql`) |
 
 ---
 

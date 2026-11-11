@@ -394,6 +394,11 @@ export function CompetitorPricingGrid({
                   >
                     {activeDrilldown.isSimulated ? "Demo Reference" : "Channel3 Live"}
                   </span>
+                  {activeDrilldown.fromCache && (
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-[#F7F7F8] text-[#626262] border-[#E5E5E5]">
+                      Cached
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-[#626262] mt-0.5">
                   Your Price:{" "}

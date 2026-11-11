@@ -533,16 +533,32 @@ export async function getRevenueTimeSeries(
 
 // ─── Invoicing API v2 ────────────────────────────────────────────────────────
 
-export async function listInvoices(): Promise<Invoice[]> {
+export interface InvoiceListResult {
+  invoices: Invoice[];
+  isLive: boolean;
+  dataSource: "paypal_sandbox" | "demo_sample";
+  note?: string;
+}
+
+export async function listInvoicesWithMeta(): Promise<InvoiceListResult> {
   const stored = getStoredInvoices();
 
   if (!hasValidPayPalConfig()) {
-    return stored;
+    return {
+      invoices: stored,
+      isLive: false,
+      dataSource: "demo_sample",
+    };
   }
 
   try {
     const token = await getAccessToken();
-    if (!token) return stored.filter((i) => i.source === "paypal_sandbox");
+    if (!token) {
+      const sandboxOnly = stored.filter((i) => i.source === "paypal_sandbox");
+      return sandboxOnly.length > 0
+        ? { invoices: sandboxOnly, isLive: false, dataSource: "paypal_sandbox", note: "PayPal OAuth unavailable; showing cached Sandbox invoices." }
+        : { invoices: stored, isLive: false, dataSource: "demo_sample", note: "PayPal OAuth unavailable; showing local store records." };
+    }
     const base = getPayPalBaseUrl();
 
     const res = await fetch(`${base}/v2/invoicing/invoices?page_size=25&page=1`, {
@@ -552,7 +568,20 @@ export async function listInvoices(): Promise<Invoice[]> {
     if (!res.ok) {
       console.warn("[PayPal] listInvoices HTTP:", res.status);
       const sandboxOnly = stored.filter((i) => i.source === "paypal_sandbox");
-      return sandboxOnly.length > 0 ? sandboxOnly : stored;
+      if (sandboxOnly.length > 0) {
+        return {
+          invoices: sandboxOnly,
+          isLive: false,
+          dataSource: "paypal_sandbox",
+          note: `PayPal Invoicing API returned HTTP ${res.status}. Showing previously synced Sandbox invoices.`,
+        };
+      }
+      return {
+        invoices: stored,
+        isLive: false,
+        dataSource: "demo_sample",
+        note: `PayPal Invoicing API returned HTTP ${res.status} (verify Invoicing permission on your Sandbox app). Showing local demo store records.`,
+      };
     }
 
     const data = await res.json();
@@ -567,12 +596,34 @@ export async function listInvoices(): Promise<Invoice[]> {
       });
     }
 
-    return getStoredInvoices().filter((i) => i.source === "paypal_sandbox");
+    return {
+      invoices: getStoredInvoices().filter((i) => i.source === "paypal_sandbox"),
+      isLive: true,
+      dataSource: "paypal_sandbox",
+    };
   } catch (err) {
     console.warn("[PayPal] listInvoices error:", err);
     const sandboxOnly = stored.filter((i) => i.source === "paypal_sandbox");
-    return sandboxOnly.length > 0 ? sandboxOnly : stored;
+    if (sandboxOnly.length > 0) {
+      return {
+        invoices: sandboxOnly,
+        isLive: false,
+        dataSource: "paypal_sandbox",
+        note: "PayPal Invoicing request failed; showing previously synced Sandbox invoices.",
+      };
+    }
+    return {
+      invoices: stored,
+      isLive: false,
+      dataSource: "demo_sample",
+      note: "PayPal Invoicing request failed; showing local demo store records.",
+    };
   }
+}
+
+export async function listInvoices(): Promise<Invoice[]> {
+  const res = await listInvoicesWithMeta();
+  return res.invoices;
 }
 
 // ─── Proposal Validation (AI / UI Two-Step Creation) ─────────────────────────

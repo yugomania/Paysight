@@ -1,4 +1,4 @@
-import { google } from "@ai-sdk/google";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import {
   convertToCoreMessages,
   createDataStreamResponse,
@@ -666,6 +666,186 @@ function normalizeMessagesForStreamText(
     }));
 }
 
+// ─── Gemini 3.x Model Selection & Thought-Signature Bridge ───────────────────
+
+const RETIRED_GEMINI_MODELS = new Set([
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-001",
+  "gemini-2.0-flash-lite",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+]);
+
+function getCandidateGeminiModels(): string[] {
+  const configured = process.env.GEMINI_MODEL?.trim();
+  const candidates: string[] = [];
+  if (configured && !RETIRED_GEMINI_MODELS.has(configured)) {
+    candidates.push(configured);
+  }
+  for (const fallback of [
+    "gemini-3.5-flash",
+    "gemini-3-flash-preview",
+    "gemini-3.5-flash-lite",
+  ]) {
+    if (!candidates.includes(fallback)) {
+      candidates.push(fallback);
+    }
+  }
+  return candidates;
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${stableJson(obj[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+function createThoughtSignaturePreservingFetch(): typeof fetch {
+  const byCallKey = new Map<string, string>();
+  const orderedQueue: string[] = [];
+
+  const captureFromPayload = (payload: unknown) => {
+    if (!payload || typeof payload !== "object") return;
+    const candidates = (payload as Record<string, unknown>).candidates;
+    if (!Array.isArray(candidates)) return;
+
+    for (const candidate of candidates) {
+      const content = (candidate as Record<string, unknown>)?.content as
+        | Record<string, unknown>
+        | undefined;
+      const parts = content?.parts;
+      if (!Array.isArray(parts)) continue;
+
+      for (const rawPart of parts) {
+        if (!rawPart || typeof rawPart !== "object") continue;
+        const part = rawPart as Record<string, unknown>;
+        const sig =
+          typeof part.thoughtSignature === "string"
+            ? part.thoughtSignature
+            : typeof part.thought_signature === "string"
+            ? part.thought_signature
+            : "";
+        const fc = part.functionCall as Record<string, unknown> | undefined;
+        if (sig && fc && typeof fc.name === "string") {
+          const key = `${fc.name}:${stableJson(fc.args ?? {})}`;
+          byCallKey.set(key, sig);
+          orderedQueue.push(sig);
+        }
+      }
+    }
+  };
+
+  return async (input, init) => {
+    let nextInit = init;
+    const urlStr = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+    if (
+      urlStr.includes("generativelanguage.googleapis.com") &&
+      typeof init?.body === "string" &&
+      init.body.includes('"functionCall"')
+    ) {
+      try {
+        const bodyJson = JSON.parse(init.body) as Record<string, unknown>;
+        const contents = bodyJson.contents;
+        let mutated = false;
+        if (Array.isArray(contents)) {
+          for (const item of contents) {
+            if (!item || typeof item !== "object") continue;
+            const c = item as Record<string, unknown>;
+            if (c.role !== "model" || !Array.isArray(c.parts)) continue;
+            for (const rawPart of c.parts) {
+              if (!rawPart || typeof rawPart !== "object") continue;
+              const part = rawPart as Record<string, unknown>;
+              if (part.functionCall && !part.thoughtSignature && !part.thought_signature) {
+                const fc = part.functionCall as Record<string, unknown>;
+                const key = `${String(fc.name ?? "")}:${stableJson(fc.args ?? {})}`;
+                const savedSig =
+                  byCallKey.get(key) ??
+                  orderedQueue.shift() ??
+                  "skip_thought_signature_validator";
+                part.thoughtSignature = savedSig;
+                mutated = true;
+              }
+            }
+          }
+        }
+        if (mutated) {
+          const headers = new Headers(init.headers);
+          headers.delete("content-length");
+          nextInit = { ...init, headers, body: JSON.stringify(bodyJson) };
+        }
+      } catch {
+        // Leave outgoing body untouched if not valid JSON
+      }
+    }
+
+    const res = await fetch(input, nextInit);
+    if (!res.ok || !res.body) return res;
+
+    const ct = res.headers.get("content-type") ?? "";
+    if (!ct.includes("text/event-stream")) {
+      if (ct.includes("application/json")) {
+        res
+          .clone()
+          .json()
+          .then(captureFromPayload)
+          .catch(() => undefined);
+      }
+      return res;
+    }
+
+    const decoder = new TextDecoder();
+    let sseBuffer = "";
+    const inspector = new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        controller.enqueue(chunk);
+        sseBuffer += decoder.decode(chunk, { stream: true });
+        let nlIdx = sseBuffer.indexOf("\n");
+        while (nlIdx !== -1) {
+          const line = sseBuffer.slice(0, nlIdx).trim();
+          sseBuffer = sseBuffer.slice(nlIdx + 1);
+          if (line.startsWith("data:")) {
+            const rawJson = line.slice(5).trim();
+            if (rawJson && rawJson !== "[DONE]") {
+              try {
+                captureFromPayload(JSON.parse(rawJson));
+              } catch {
+                // Ignore partial/malformed SSE JSON
+              }
+            }
+          }
+          nlIdx = sseBuffer.indexOf("\n");
+        }
+      },
+      flush() {
+        const line = sseBuffer.trim();
+        if (line.startsWith("data:")) {
+          const rawJson = line.slice(5).trim();
+          if (rawJson && rawJson !== "[DONE]") {
+            try {
+              captureFromPayload(JSON.parse(rawJson));
+            } catch {
+              // Ignore trailing parse issue
+            }
+          }
+        }
+      },
+    });
+
+    return new Response(res.body.pipeThrough(inspector), {
+      status: res.status,
+      statusText: res.statusText,
+      headers: res.headers,
+    });
+  };
+}
+
 // ─── Streaming Chat Handler ───────────────────────────────────────────────────
 
 export async function createChatStream(
@@ -676,53 +856,77 @@ export async function createChatStream(
   return createDataStreamResponse({
     execute: async (dataStream) => {
       let producedText = false;
+      let emittedAnyPart = false;
 
       if (hasGemini) {
-        const modelName = process.env.GEMINI_MODEL?.trim() || "gemini-2.0-flash";
-        try {
-          const coreMessages = normalizeMessagesForStreamText(messages);
-          const result = streamText({
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            model: google(modelName) as any,
-            system: SYSTEM_PROMPT,
-            messages: coreMessages,
-            tools: customTools,
-            maxSteps: 5,
-            temperature: 0.1,
-          });
+        const coreMessages = normalizeMessagesForStreamText(messages);
+        const provider = createGoogleGenerativeAI({
+          apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY?.trim(),
+          fetch: createThoughtSignaturePreservingFetch(),
+        });
 
-          for await (const part of result.fullStream) {
-            if (part.type === "text-delta" && part.textDelta) {
-              dataStream.write(formatDataStreamPart("text", part.textDelta));
-              producedText = true;
-            } else if (part.type === "tool-call") {
-              dataStream.write(
-                formatDataStreamPart("tool_call", {
-                  toolCallId: part.toolCallId,
-                  toolName: part.toolName,
-                  args: part.args,
-                })
-              );
-            } else if (part.type === "tool-result") {
-              dataStream.write(
-                formatDataStreamPart("tool_result", {
-                  toolCallId: part.toolCallId,
-                  result: part.result,
-                })
-              );
-            } else if (part.type === "error") {
-              console.warn(
-                "[createChatStream] Gemini stream error, switching to verified local fallback:",
-                part.error
-              );
-              break;
+        for (const modelName of getCandidateGeminiModels()) {
+          let hitErrorBeforeOutput = false;
+          try {
+            const result = streamText({
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              model: provider(modelName) as any,
+              system: SYSTEM_PROMPT,
+              messages: coreMessages,
+              tools: customTools,
+              maxSteps: 5,
+              maxTokens: 1200,
+              maxRetries: 1,
+              abortSignal: AbortSignal.timeout(45000),
+              temperature: 0.1,
+            });
+
+            for await (const part of result.fullStream) {
+              if (part.type === "text-delta" && part.textDelta) {
+                dataStream.write(formatDataStreamPart("text", part.textDelta));
+                producedText = true;
+                emittedAnyPart = true;
+              } else if (part.type === "tool-call") {
+                dataStream.write(
+                  formatDataStreamPart("tool_call", {
+                    toolCallId: part.toolCallId,
+                    toolName: part.toolName,
+                    args: part.args,
+                  })
+                );
+                emittedAnyPart = true;
+              } else if (part.type === "tool-result") {
+                dataStream.write(
+                  formatDataStreamPart("tool_result", {
+                    toolCallId: part.toolCallId,
+                    result: part.result,
+                  })
+                );
+                emittedAnyPart = true;
+              } else if (part.type === "error") {
+                console.warn(
+                  `[createChatStream] Gemini (${modelName}) stream error:`,
+                  part.error
+                );
+                if (!emittedAnyPart) {
+                  hitErrorBeforeOutput = true;
+                }
+                break;
+              }
+            }
+          } catch (err) {
+            console.warn(
+              `[createChatStream] Gemini (${modelName}) streamText exception:`,
+              err instanceof Error ? err.message : err
+            );
+            if (!emittedAnyPart) {
+              hitErrorBeforeOutput = true;
             }
           }
-        } catch (err) {
-          console.warn(
-            "[createChatStream] Gemini streamText exception:",
-            err instanceof Error ? err.message : err
-          );
+
+          if (producedText || !hitErrorBeforeOutput) {
+            break;
+          }
         }
       }
 

@@ -8,6 +8,11 @@ import {
   removeMerchantExpense,
   updateMonthlyBudgetTarget,
 } from "@/lib/budget/service";
+import {
+  checkRateLimit,
+  getClientIdentifier,
+  rateLimitExceededResponse,
+} from "@/lib/security/rate-limit";
 import type { ExpenseCategory } from "@/types";
 
 const addExpenseSchema = z.object({
@@ -50,6 +55,15 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const rl = checkRateLimit({
+    key: `budget-post:${getClientIdentifier(req)}`,
+    limit: 30,
+    windowMs: 60_000,
+  });
+  if (!rl.allowed) {
+    return rateLimitExceededResponse(rl);
+  }
+
   try {
     const body = await req.json();
 

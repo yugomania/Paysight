@@ -1,12 +1,26 @@
 import { NextRequest } from "next/server";
 import { captureServerSideOrder } from "@/lib/paypal/api";
 import { resolveSandboxProduct } from "@/lib/paypal/catalog";
+import {
+  checkRateLimit,
+  getClientIdentifier,
+  rateLimitExceededResponse,
+} from "@/lib/security/rate-limit";
 
 // In-process idempotency set — guards against concurrent duplicate submissions
 // within the same server process lifetime.
 const captureInFlight = new Set<string>();
 
 export async function POST(req: NextRequest) {
+  const rl = checkRateLimit({
+    key: `orders-capture:${getClientIdentifier(req)}`,
+    limit: 30,
+    windowMs: 60_000,
+  });
+  if (!rl.allowed) {
+    return rateLimitExceededResponse(rl);
+  }
+
   try {
     const body = await req.json().catch(() => ({}));
     const orderId = typeof body?.orderId === "string" ? body.orderId.trim() : "";

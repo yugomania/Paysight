@@ -28,14 +28,17 @@ PaySight is currently designed as a **single-merchant local / hackathon workspac
 6. **Concurrent Write Protection & Input Validation**:
    - Database writes use cross-process exclusive `.lock` files + UUID temp-file atomic renames (`src/lib/db/index.ts`).
    - Budget endpoints validate inputs using strict `zod` schemas (`src/app/api/budget/route.ts`).
+7. **API Rate Limiting & HTTP Security Headers**:
+   - Process-local sliding-window per-IP rate limiting (`src/lib/security/rate-limit.ts`) protects expensive upstream/mutation routes (`/api/chat` 20/min, `/api/pricing` 40/min, `/api/orders/create`, `/api/orders/capture`, `/api/invoices` POST, and `/api/budget` POST 30/min), returning HTTP `429` + `Retry-After`.
+   - `next.config.ts` applies `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin`, and restrictive `Permissions-Policy` headers across all routes.
 
 ---
 
 ## 3. Known Security Limitations
 
 - **No End-User Authentication or RBAC**: There is currently no user login, session cookie, CSRF token, or multi-tenant isolation. Do **not** deploy PaySight publicly with live PayPal credentials or real customer PII without placing authentication and authorization middleware in front of all routes and API endpoints.
-- **No Rate Limiting**: `/api/chat` and `/api/pricing` do not enforce per-IP rate limiting; public exposure could exhaust Gemini or Channel3 API quotas.
-- **Process-Local In-Flight Locks**: `captureInFlight` and `invoiceCreationLocks` protect single-instance Node servers only.
+- **Process-Local Rate Limits & In-Flight Locks**: `checkRateLimit` (`src/lib/security/rate-limit.ts`), `captureInFlight`, and `invoiceCreationLocks` operate in-memory for a single Node.js instance; multi-instance horizontal deployments require shared Redis/edge rate limiting and database locks.
+- **Single-Instance JSON Storage on Ephemeral Disks**: `.data/paysight-db.json` works well for local development and single-container demos, but ephemeral cloud containers reset local disk on restart unless backed by PostgreSQL/Neon (`db/migrations/001_init.sql` deferred adapter).
 
 ---
 
