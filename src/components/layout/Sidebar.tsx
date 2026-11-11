@@ -199,7 +199,7 @@ export function Sidebar({
                   <span className="truncate">{item.label}</span>
                 </div>
                 <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 rounded bg-[#242424] text-[#A3A3A3] border border-[#333333]">
-                  {isLiveConnected ? "Sandbox" : "Demo"}
+                  {isLiveConnected ? "Sandbox" : "Offline"}
                 </span>
               </button>
             );
@@ -217,14 +217,14 @@ export function Sidebar({
             <span className="inline-flex items-center gap-1.5 text-[10px] text-[#A3A3A3] font-medium">
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
-                  isLiveConnected ? "bg-[#15803D]" : "bg-[#B45309]"
+                  isLiveConnected ? "bg-[#15803D]" : "bg-[#B91C1C]"
                 }`}
               />
-              {isLiveConnected ? "PayPal Sandbox" : "Demo Mode"}
+              {isLiveConnected ? "PayPal Sandbox" : "Not Connected"}
             </span>
           </div>
           <div className="text-[10px] font-mono text-[#737373] truncate">
-            {isLiveConnected ? "api-m.sandbox.paypal.com" : "Sample Data (Local Store)"}
+            {isLiveConnected ? "api-m.sandbox.paypal.com" : "PayPal Credentials Required"}
           </div>
         </div>
 
@@ -238,7 +238,7 @@ export function Sidebar({
                 Merchant Workspace
               </span>
               <span className="text-[10px] text-[#737373] truncate">
-                {isLiveConnected ? "Sandbox Connected" : "Local Demo Mode"}
+                {isLiveConnected ? "Sandbox Connected" : "PayPal Disconnected"}
               </span>
             </div>
           </div>

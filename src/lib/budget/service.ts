@@ -304,7 +304,13 @@ export function computeBudgetSummaryFromRecords(params: {
       grossSalesChangePct,
     },
     calculationNotes: [
-      `Data source: ${params.dataSource === "paypal_sandbox" ? "PayPal Sandbox transactions" : "Local Demo Sample ledger"} combined with merchant-recorded operating expenses.`,
+      `Data source: ${
+        params.dataSource === "paypal_sandbox"
+          ? "PayPal Sandbox transactions"
+          : params.dataSource === "paypal_live"
+          ? "PayPal Live transactions"
+          : "PayPal transactions unavailable (unconfigured)"
+      } combined with merchant-recorded operating expenses.`,
       "Net PayPal Proceeds = Completed PayPal Gross Sales − PayPal Processing Fees (strictly for the selected currency).",
       "Estimated Operating Cash Flow = Net PayPal Proceeds − Manual Operating Expenses. PayPal transactions may not capture non-PayPal sales channels, and manual expenses exclude PayPal fees.",
       "Refunds are tracked separately from completed gross sales and not silently subtracted from target progress.",

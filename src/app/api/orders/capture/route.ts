@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { captureServerSideOrder } from "@/lib/paypal/api";
+import { hasValidPayPalConfig } from "@/lib/paypal/client";
 import { resolveSandboxProduct } from "@/lib/paypal/catalog";
 import {
   checkRateLimit,
@@ -35,6 +36,16 @@ export async function POST(req: NextRequest) {
       return Response.json(
         { error: `Unknown productId "${productId}"` },
         { status: 400 }
+      );
+    }
+
+    if (!hasValidPayPalConfig()) {
+      return Response.json(
+        {
+          error:
+            "PayPal Sandbox credentials (PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET) are not configured in .env.local.",
+        },
+        { status: 503 }
       );
     }
 

@@ -12,13 +12,13 @@ export interface SandboxProduct {
  * Amounts and currencies are resolved strictly server-side — never trusted from the browser.
  */
 export const SANDBOX_PRODUCTS: Record<string, SandboxProduct> = {
-  demo_10: {
-    id: "demo_10",
-    name: "PaySight Demo Product",
+  starter_10: {
+    id: "starter_10",
+    name: "PaySight Sandbox Starter Pack",
     amount: "10.00",
     numericAmount: 10.0,
     currency: "USD",
-    description: "[SANDBOX] PaySight $10 Demo — test payment, no real money",
+    description: "[SANDBOX] $10 test checkout item via PayPal Sandbox",
   },
   sub_pro: {
     id: "sub_pro",
@@ -48,7 +48,7 @@ export const SANDBOX_PRODUCTS: Record<string, SandboxProduct> = {
 
 export function resolveSandboxProduct(productId?: string): SandboxProduct | null {
   if (!productId || !productId.trim()) {
-    return SANDBOX_PRODUCTS.demo_10;
+    return SANDBOX_PRODUCTS.starter_10;
   }
   return SANDBOX_PRODUCTS[productId.trim()] ?? null;
 }

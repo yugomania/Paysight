@@ -14,7 +14,7 @@ flowchart TD
         INV["InvoicesPanel & QuickActionModal (2-Step Preview)"]
         BUD["BudgetIntelligencePanel"]
         PRC["CompetitorPricingGrid (Channel3 Radar)"]
-        CHK["PayPalDemoCheckout (4 SKUs)"]
+        CHK["PayPalSandboxCheckout (4 SKUs)"]
         AI_UI["ChatPanel (useChat + Safe JSX Markdown)"]
     end
 
@@ -89,10 +89,10 @@ sequenceDiagram
             PPAPI->>PP: searchTransactions(start, end, page, size=100)
             PP-->>PPAPI: transactionDetails[] (absAmount, absFee, net)
         end
-        PPAPI->>DB: saveTransactionsBatch(fetched)
-        PPAPI-->>API: Sandbox records only (no demo_sample mixing)
-    else Demo Mode
-        PPAPI->>DB: Read demo_sample transactions
+        PP_API->>DB: saveTransactionsBatch(fetched)
+        PPAPI-->>API: Sandbox records only (empty/warning on error)
+    else PayPal Unconfigured
+        PPAPI-->>API: [] + source="unconfigured" warning
     end
     API->>API: computeMerchantKPIs() scoped to primaryCurrency + listDisputes()
     API-->>UI: Authoritative KPIs + currencyTotals + isPartialData flag
@@ -113,8 +113,8 @@ flowchart LR
     G --> H{"autoSend == true?"}
     H -- Yes --> I["POST .../send -> returns paymentUrl"]
     H -- No --> J["Status = DRAFT (Send/Cancel later via InvoicesPanel)"]
-    F -- No --> K["Save local Demo Mode invoice"]
-    I & J & K --> L["saveInvoice() -> .data/paysight-db.json"]
+    F -- No --> K["Reject HTTP 503 (PayPal required)"]
+    I & J --> L["saveInvoice() -> .data/paysight-db.json"]
 ```
 
 ### Fail-Closed Webhook Processing (`POST /api/webhooks/paypal`)
@@ -132,13 +132,13 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant U as Merchant / Buyer
-    participant CHK as PayPalDemoCheckout
+    participant CHK as PayPalSandboxCheckout
     participant C as POST /api/orders/create
     participant P as PayPal Popup / Orders v2
     participant CAP as POST /api/orders/capture
     participant DB as paysight-db.json
 
-    U->>CHK: Select SKU (demo_10 / sub_pro / intel_add / exp_pack)
+    U->>CHK: Select SKU (starter_10 / sub_pro / intel_add / exp_pack)
     CHK->>C: { productId }
     C->>C: resolveSandboxProduct(productId) from SANDBOX_PRODUCTS
     alt Live PayPal Sandbox
@@ -150,16 +150,14 @@ sequenceDiagram
         CAP->>P: OrdersController.captureOrder(orderId)
         CAP->>CAP: Verify amount, currency, status == COMPLETED, dedup captureId
         CAP->>DB: saveTransaction + markReconciled
-    else Demo Mode Simulation
-        C-->>CHK: { id: ORD-DEMO-..., isLive: false }
-        CHK->>CAP: { orderId, productId }
-        CAP->>DB: Record CAP-SIM-* (source: demo_sample)
+    else Unconfigured Credentials
+        C-->>CHK: HTTP 503 (PayPal required)
     end
 ```
 
 ---
 
-## 5. Grounded AI Tool & Fallback Architecture
+## 5. Grounded AI Tool Architecture
 
 ```mermaid
 flowchart TD
@@ -168,9 +166,8 @@ flowchart TD
     CHECK -- Yes --> GEM["streamText(google(GEMINI_MODEL), SYSTEM_PROMPT, 9 paysightTools, maxSteps=5)"]
     GEM --> STREAM{"Emitted text-delta?"}
     STREAM -- Yes --> SSE["Stream text, tool_call, tool_result to ChatPanel"]
-    STREAM -- "No (error before text)" --> FB["generateOfflineMarkdown() executes local backend tools"]
-    CHECK -- No --> FB
-    FB --> SSE
+    STREAM -- "No (error before text)" --> ERR["Emit explicit error part (no fake fallback)"]
+    CHECK -- No --> R503["Return HTTP 503"]
 ```
 
 Untrusted fields returned by tools (`customer`, `product`, `note`, `retailer`, `title`, `reason`) pass through `sanitizeUntrustedField()` and are bound by explicit system prompt boundaries against indirect prompt injection.

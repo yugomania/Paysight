@@ -31,7 +31,6 @@ interface Row {
   position: PricingComparison["pricePosition"];
   competitors: number;
   exactCount: number;
-  isSimulated: boolean;
   rawComparison: PricingComparison;
 }
 
@@ -100,6 +99,7 @@ function PriceCell({ value, data }: ICellRendererParams<Row>) {
 interface CompetitorPricingGridProps {
   comparisons: PricingComparison[];
   loading: boolean;
+  initialError?: string;
   onAddComparison?: (comparison: PricingComparison) => void;
   onExplainComparison?: () => void;
 }
@@ -107,6 +107,7 @@ interface CompetitorPricingGridProps {
 export function CompetitorPricingGrid({
   comparisons,
   loading,
+  initialError = "",
   onAddComparison,
   onExplainComparison,
 }: CompetitorPricingGridProps) {
@@ -168,7 +169,6 @@ export function CompetitorPricingGrid({
         position: c.pricePosition,
         competitors: c.competitorCount,
         exactCount: c.exactMatchesCount ?? c.competitorCount,
-        isSimulated: c.isSimulated,
         rawComparison: c,
       })),
     [comparisons]
@@ -186,11 +186,6 @@ export function CompetitorPricingGrid({
             <span className="text-xs font-medium text-[#171717] truncate">
               {data?.productName}
             </span>
-            {data?.isSimulated && (
-              <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-[#FFFBEB] text-[#B45309] border border-[#FDE68A] flex-shrink-0">
-                Demo
-              </span>
-            )}
           </div>
         ),
       },
@@ -249,8 +244,10 @@ export function CompetitorPricingGrid({
     }
   };
 
-  const hasSimulatedRows = comparisons.some((c) => c.isSimulated);
-  const hasLiveRows = comparisons.some((c) => !c.isSimulated && c.competitorCount > 0);
+  const hasLiveRows = comparisons.some(
+    (c) => c.source === "channel3_live" && c.competitorCount > 0
+  );
+  const effectiveError = searchError || initialError;
 
   return (
     <div className="bg-white border border-[#E5E5E5] rounded-xl overflow-hidden flex flex-col">
@@ -282,12 +279,12 @@ export function CompetitorPricingGrid({
             className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded border ${
               hasLiveRows
                 ? "bg-[#ECFDF3] text-[#15803D] border-[#BBF7D0]"
-                : hasSimulatedRows
-                ? "bg-[#FFFBEB] text-[#B45309] border-[#FDE68A]"
+                : effectiveError
+                ? "bg-[#FEF2F2] text-[#B91C1C] border-[#FECACA]"
                 : "bg-[#F7F7F8] text-[#171717] border-[#E5E5E5]"
             }`}
           >
-            {hasLiveRows ? "Channel3 Live" : hasSimulatedRows ? "Demo Catalog Fallback" : "Channel3"}
+            {hasLiveRows ? "Channel3 Live" : effectiveError ? "Unavailable" : "Channel3"}
           </span>
         </div>
       </div>
@@ -340,10 +337,10 @@ export function CompetitorPricingGrid({
         </button>
       </form>
 
-      {searchError && (
+      {effectiveError && (
         <div className="mx-3 mt-3 p-2.5 rounded-lg bg-[#FEF2F2] border border-[#FECACA] text-xs text-[#B91C1C] flex items-center gap-2">
           <AlertCircle className="w-4 h-4 flex-shrink-0" />
-          <span>{searchError}</span>
+          <span>{effectiveError}</span>
         </div>
       )}
 
@@ -362,7 +359,7 @@ export function CompetitorPricingGrid({
       </div>
 
       <div className="px-4 py-2 bg-white border-t border-[#E5E5E5] text-[11px] text-[#626262] flex items-center justify-between">
-        <span>Benchmarks reflect retrieved listings only; simulated fallbacks are explicitly flagged.</span>
+        <span>Benchmarks reflect live retrieved Channel3 listings only.</span>
         <span className="font-medium text-[#171717]">Click any row to view retailer links</span>
       </div>
 
@@ -387,12 +384,12 @@ export function CompetitorPricingGrid({
                   </h4>
                   <span
                     className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
-                      activeDrilldown.isSimulated
-                        ? "bg-[#FFFBEB] text-[#B45309] border-[#FDE68A]"
+                      activeDrilldown.competitorCount === 0
+                        ? "bg-[#FEF2F2] text-[#B91C1C] border-[#FECACA]"
                         : "bg-[#ECFDF3] text-[#15803D] border-[#BBF7D0]"
                     }`}
                   >
-                    {activeDrilldown.isSimulated ? "Demo Reference" : "Channel3 Live"}
+                    {activeDrilldown.competitorCount === 0 ? "No Listings" : "Channel3 Live"}
                   </span>
                   {activeDrilldown.fromCache && (
                     <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border bg-[#F7F7F8] text-[#626262] border-[#E5E5E5]">

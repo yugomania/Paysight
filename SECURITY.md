@@ -2,7 +2,7 @@
 
 ## 1. Security Model & Scope
 
-PaySight is currently designed as a **single-merchant local / hackathon workspace** running against PayPal Sandbox credentials, Channel3, and Gemini APIs. Review the security controls and explicit limitations below before any public deployment.
+PaySight is currently designed as a **single-merchant workspace** running strictly against live PayPal Sandbox credentials, Channel3, and Gemini APIs with fail-closed `503` checks when credentials are absent (no mock/simulated data fallbacks). Review the security controls and explicit limitations below before any public deployment.
 
 ---
 

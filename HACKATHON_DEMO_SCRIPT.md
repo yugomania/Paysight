@@ -1,6 +1,6 @@
 # PaySight — Hackathon Demo Script (2m 55s)
 
-> **Preparation**: Run `npm run dev` on `http://localhost:3000`. Decide whether you are recording in **PayPal Sandbox Mode** (with `.env.local` configured and a Sandbox Buyer login ready in another tab) or **Demo Mode** (blank keys). Never display `.env.local` on screen during recording.
+> **Preparation**: Run `npm run dev` on `http://localhost:3000` with PayPal Sandbox, Channel3, and Gemini credentials configured in `.env.local` (keep a Sandbox Buyer login ready in another tab). Never display `.env.local` on screen during recording.
 
 ---
 
@@ -20,13 +20,13 @@
 - **Say**: *"Notice the tool execution badge for `summarizePayments`. PaySight Copilot fetches the exact server KPI numbers—gross volume, fees, net proceeds, and source—without letting the LLM perform its own math."*
 
 ### 1:20–1:50 — Channel3 Market Intelligence
-- **Show**: Click `Price comparison` in the sidebar. Point out the data-source badge (`Channel3 Live` or `Demo Catalog Fallback`), enter `"Sony WH-1000XM5"` with price `149.99`, click `Compare Item`, and open the drilldown modal showing exact vs. approximate matches, floor/avg/ceiling, price difference, and retailer links.
-- **Say**: *"Under Price Comparison, Channel3 benchmarks our SKU against multi-retailer listings, separating exact from approximate matches and transparently labeling live versus fallback results."*
+- **Show**: Click `Price comparison` in the sidebar. Point out the `Channel3 Live` data-source badge, inspect or run `"Sony WH-1000XM5"` with price `149.99`, click `Compare Item`, and open the drilldown modal showing exact vs. approximate matches, floor/avg/ceiling, price difference, and retailer links.
+- **Say**: *"Under Price Comparison, Channel3 benchmarks our SKU against live multi-retailer listings, separating exact from approximate matches."*
 
 ### 1:50–2:20 — Two-Step Invoice Creation or Sandbox Checkout
 - **Show (Pick either or show briefly back-to-back)**:
   - **Option A (Invoicing)**: Click `New Invoice`, review Step 1 line items, click `Review Preview` to show Step 2's SHA-256-bound preview (`Create as DRAFT`), click `Confirm & Create Invoice`, then open `Invoices` tab to show the new draft with `Send`, `Cancel`, and `Details` controls.
-  - **Option B (Sandbox Checkout)**: Open `Sandbox checkout`, select `PaySight Pro Merchant Plan ($49.00)` (or `$10.00` Demo Product), approve payment in the PayPal Sandbox popup (or click `Execute Demo Mode Checkout` in Demo Mode), and show the verified capture card (`Capture ID`, `Fee`, `Net`).
+  - **Option B (Sandbox Checkout)**: Open `Sandbox checkout`, select `PaySight Pro Merchant Plan ($49.00)` (or `starter_10` `$10.00`), approve payment in the PayPal Sandbox popup, and show the verified capture card (`Capture ID`, `Fee`, `Net`).
 - **Say**: *"Whether collecting payment via PayPal Invoicing v2 or Sandbox Checkout, amounts are verified server-side and bound by confirmation tokens before any transaction commits."*
 
 ### 2:20–2:45 — Budget Intelligence & Business Impact

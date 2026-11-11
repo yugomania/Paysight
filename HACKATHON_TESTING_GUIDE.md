@@ -23,26 +23,24 @@ npm run build
 | `tests/budget.test.ts` | Gross/fee/net/refund/manual expense math, currency isolation, budget statuses/alerts, target updates, expense validation & deletion, MoM comparison |
 | `tests/db_concurrency.test.ts` | Burst concurrent writes, batch writes, lockfile serialization, `.corrupt.*` backup recovery |
 | `tests/invoicing.test.ts` | Proposal field validation, SHA-256 confirmation mismatch, `autoSend` & HTTP token requirements, Draft -> Sent -> Cancelled lifecycle, concurrent lock rejection |
-| `tests/pricing.test.ts` | Demo simulated source labeling, live Channel3 `POST /v1/search` nested `offers[]` & flat fixture parsing, fail-honest empty/HTTP error behavior without price fabrication |
-| `tests/reconciliation_and_webhooks.test.ts` | Unknown SKU rejection, capture persistence & reconciliation flags, transaction deduplication, fail-closed `503`/`401` webhook gates, verified event handling, invoice line-item preservation, `PAID` downgrade prevention |
+| `tests/pricing.test.ts` | Fail-closed `channel3_unavailable` without mock fabrication, live Channel3 `POST /v1/search` nested `offers[]` & flat fixture parsing, HTTP `502` error honesty |
+| `tests/reconciliation_and_webhooks.test.ts` | Unknown SKU rejection, unconfigured `503` capture rejection, transaction deduplication, fail-closed `503`/`401` webhook gates, verified event handling, auto stale-token revocation on `403`, invoice line-item preservation, `PAID` downgrade prevention |
 | `tests/security_and_health.test.ts` | Sliding-window per-IP rate limiting (`429` + `Retry-After` on `/api/pricing`), non-sensitive `/api/health` readiness telemetry, and PostgreSQL schema coverage (`db/migrations/001_init.sql`) |
 
 ---
 
 ## 2. Manual Judge Verification Walkthrough
 
-### A. Demo Mode (Zero Configuration)
-1. Ensure `.env.local` has blank PayPal/Gemini/Channel3 keys (or omit `.env.local`).
-2. Start dev server: `npm run dev` and open `http://localhost:3000`.
-3. Confirm the orange **Demo Mode Active** banner appears and bottom-left sidebar shows `Demo Mode`.
-4. Navigate through **Overview**, **Transactions** (click a row for detail modal + test `Export`), **Invoices** (create a multi-item draft -> send -> inspect detail -> cancel), **Budget intelligence** (edit targets + add/delete an expense), **Price comparison** (verify `Demo Catalog Fallback` badge), **Disputes** (confirms zero fabricated disputes), and **Sandbox checkout** (select any of the 4 SKUs and click `Execute Demo Mode Checkout`).
-5. Open **Ask PaySight** (`Cmd+J`) and run `"Summarise my payments for the last 30 days."` and `"How am I pacing against my monthly budget and sales target?"`.
+### A. Unconfigured Fail-Closed Verification
+1. If `.env.local` has blank PayPal/Gemini/Channel3 keys, verify APIs fail closed rather than serving fake/mock data:
+   - `POST /api/orders/create`, `POST /api/orders/capture`, `POST /api/invoices` (mutations), `GET /api/pricing`, and `POST /api/chat` return HTTP `503`.
+   - `.data/paysight-db.json` initializes with empty arrays (`[]`) and zero demo seed transactions/invoices/expenses.
 
 ### B. PayPal Sandbox Mode Verification
-1. Populate `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_ENVIRONMENT=sandbox`, `NEXT_PUBLIC_PAYPAL_CLIENT_ID`, and `PAYPAL_WEBHOOK_ID` in `.env.local`.
-2. Restart `npm run dev`. Confirm sidebar indicator switches to **PayPal Sandbox** (`api-m.sandbox.paypal.com`).
-3. Create a Draft invoice via `+ New Invoice` -> check your PayPal Sandbox Developer Dashboard -> click **Send** inside `Invoices`.
-4. Test **Sandbox checkout**: select a catalog SKU, click the PayPal button, sign in with a Sandbox **Personal Buyer** test account, approve, and verify the resulting `CAP-*` transaction appears in `Transactions` with actual PayPal fees and net settlement.
+1. Populate `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_ENVIRONMENT=sandbox`, `NEXT_PUBLIC_PAYPAL_CLIENT_ID`, and `PAYPAL_WEBHOOK_ID` (plus `GOOGLE_GENERATIVE_AI_API_KEY` and `CHANNEL3_API_KEY`) in `.env.local`.
+2. Restart `npm run dev`. Confirm sidebar indicator shows **PayPal Sandbox** (`api-m.sandbox.paypal.com`) and zero disconnection banners appear.
+3. Navigate through **Overview** (with currency selector), **Transactions** (detail modal + `Export`), **Invoices** (`+ New Invoice` 2-step preview -> `Send` -> `Cancel`), **Budget intelligence** (targets + expenses), **Price comparison** (`Channel3 Live` badge), **Disputes**, and **Sandbox checkout** (`starter_10`, `sub_pro`, `intel_add`, `exp_pack` via PayPal popup buyer login).
+4. Open **Ask PaySight** (`Cmd+J`) and test live Gemini tool calls (`"Summarise my payments for the last 30 days."`, `"How am I pacing against my monthly budget and sales target?"`).
 
 ### C. Fail-Closed Webhook Check (`curl`)
 Verify unsigned requests fail closed (`401` when configured, or `503` if `PAYPAL_WEBHOOK_ID` is unset):

@@ -215,9 +215,9 @@ export function QuickActionModal({
                   ? "Step 1 of 2: Enter customer, currency, and line items"
                   : stage === "PREVIEW"
                   ? "Step 2 of 2: Review preview bound by SHA-256 confirmation token"
-                  : createdInvoice?.source === "paypal_sandbox"
-                  ? "Created in PayPal Sandbox & local ledger"
-                  : "Created in Demo Mode local ledger"}
+                  : createdInvoice?.source === "paypal_live"
+                  ? "Created in PayPal Live & local ledger"
+                  : "Created in PayPal Sandbox & local ledger"}
               </p>
             </div>
           </div>
@@ -509,9 +509,9 @@ export function QuickActionModal({
             <div className="p-6 flex flex-col items-center text-center space-y-3.5">
               <CheckCircle2 className="w-12 h-12 text-[#15803D]" />
               <h4 className="text-base font-bold text-[#171717]">
-                {createdInvoice.source === "paypal_sandbox"
-                  ? "Invoice Created in PayPal Sandbox"
-                  : "Invoice Created in Demo Store"}
+                {createdInvoice.source === "paypal_live"
+                  ? "Invoice Created in PayPal Live"
+                  : "Invoice Created in PayPal Sandbox"}
               </h4>
 
               <div className="w-full p-4 rounded-xl bg-[#F7F7F8] border border-[#E5E5E5] space-y-2 text-left text-xs">

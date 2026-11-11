@@ -44,271 +44,14 @@ export function getDbFilePath(): string {
   return custom ? path.resolve(custom) : DEFAULT_DB_FILE;
 }
 
-function getCurrentMonthKey(): string {
-  return new Date().toISOString().slice(0, 7);
-}
-
-// ─── Deterministic Demo Seed Records ─────────────────────────────────────────
-
-function buildSeedTransactions(): Transaction[] {
-  const makeFee = (amount: number) => parseFloat((amount * 0.029 + 0.30).toFixed(2));
-  const completedSale = (
-    id: string,
-    daysAgo: number,
-    amount: number,
-    customerName: string,
-    customerEmail: string,
-    productName: string,
-    productSku: string,
-    paymentMethod: Transaction["paymentMethod"],
-    note?: string
-  ): Transaction => {
-    const fee = makeFee(amount);
-    return {
-      id,
-      date: new Date(Date.now() - daysAgo * 86400000).toISOString(),
-      amount,
-      fee,
-      net: parseFloat((amount - fee).toFixed(2)),
-      currency: "USD",
-      status: "COMPLETED",
-      customerName,
-      customerEmail,
-      productName,
-      productSku,
-      paymentMethod,
-      note,
-      source: "demo_sample",
-    };
-  };
-
-  return [
-    completedSale(
-      "TXN-8841-01",
-      1,
-      149.99,
-      "Sarah Connor",
-      "sarah.c@cyberdyne.io",
-      "Premium Noise Cancelling Headphones",
-      "SKU-PNH-01",
-      "paypal",
-      "PayPal Express Checkout"
-    ),
-    completedSale(
-      "TXN-8841-02",
-      2,
-      89.99,
-      "Marcus Vance",
-      "marcus@vancecorp.com",
-      "Ergonomic Mechanical Keyboard",
-      "SKU-EMK-02",
-      "card",
-      "Credit Card via PayPal"
-    ),
-    completedSale(
-      "TXN-8841-03",
-      3,
-      119.99,
-      "Elena Rostova",
-      "elena@rostov.tech",
-      "Ultra-Clear 4K Streaming Webcam",
-      "SKU-UCW-03",
-      "paypal"
-    ),
-    {
-      id: "TXN-8841-04",
-      date: new Date(Date.now() - 4 * 86400000).toISOString(),
-      amount: 49.99,
-      fee: 0,
-      net: 49.99,
-      currency: "USD",
-      status: "PENDING",
-      customerName: "David Kim",
-      customerEmail: "dkim@innovate.kr",
-      productName: "7-in-1 Aluminum USB-C Hub",
-      productSku: "SKU-HUB-04",
-      paymentMethod: "paylater",
-      note: "Awaiting Pay Later settlement",
-      source: "demo_sample",
-    },
-    {
-      id: "TXN-8841-05",
-      date: new Date(Date.now() - 6 * 86400000).toISOString(),
-      amount: 179.99,
-      fee: 0,
-      net: 0,
-      currency: "USD",
-      status: "FAILED",
-      customerName: "Arthur Dent",
-      customerEmail: "arthur@galaxy.org",
-      productName: "Mechanical Keyboard Pro",
-      productSku: "SKU-MKP-05",
-      paymentMethod: "card",
-      note: "Card issuer declined transaction",
-      source: "demo_sample",
-    },
-    {
-      id: "TXN-8841-06",
-      date: new Date(Date.now() - 8 * 86400000).toISOString(),
-      amount: 149.99,
-      fee: 0,
-      net: -149.99,
-      currency: "USD",
-      status: "REFUNDED",
-      customerName: "Chloe Bennett",
-      customerEmail: "chloe@designhub.ca",
-      productName: "Premium Noise Cancelling Headphones",
-      productSku: "SKU-PNH-01",
-      paymentMethod: "paypal",
-      note: "Customer return within 14-day policy",
-      source: "demo_sample",
-    },
-    completedSale(
-      "TXN-8841-07",
-      11,
-      299.0,
-      "Liam O'Connor",
-      "liam@dublinfin.ie",
-      "Commercial SaaS Analytics License",
-      "SKU-LIC-07",
-      "paypal"
-    ),
-    completedSale(
-      "TXN-8841-08",
-      14,
-      59.99,
-      "Amara Singh",
-      "amara@singhventures.in",
-      "Ergonomic Monitor Riser",
-      "SKU-EMR-08",
-      "venmo"
-    ),
-    completedSale(
-      "TXN-8841-09",
-      18,
-      149.99,
-      "Julian Weber",
-      "jweber@berlineng.de",
-      "Premium Noise Cancelling Headphones",
-      "SKU-PNH-01",
-      "paypal"
-    ),
-    completedSale(
-      "TXN-8841-10",
-      22,
-      89.99,
-      "Rachel Green",
-      "rachel@centralperk.co",
-      "Ergonomic Mechanical Keyboard",
-      "SKU-EMK-02",
-      "paypal"
-    ),
-  ];
-}
-
-function buildSeedInvoices(): Invoice[] {
-  return [
-    {
-      id: "INV2-DEMO-001",
-      invoiceNumber: "INV-1001",
-      recipientName: "Acme Global Partners",
-      recipientEmail: "finance@acmepartners.com",
-      amount: 2500.0,
-      currency: "USD",
-      status: "SENT",
-      dueDate: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0],
-      createdDate: new Date(Date.now() - 2 * 86400000).toISOString(),
-      items: [
-        {
-          name: "Enterprise Merchant Intelligence License",
-          quantity: 1,
-          unitAmount: 2500.0,
-          description: "Annual PaySight subscription tier",
-        },
-      ],
-      source: "demo_sample",
-    },
-    {
-      id: "INV2-DEMO-002",
-      invoiceNumber: "INV-1002",
-      recipientName: "Starlight Digital Media",
-      recipientEmail: "billing@starlight.io",
-      amount: 890.0,
-      currency: "USD",
-      status: "PAID",
-      dueDate: new Date(Date.now() - 1 * 86400000).toISOString().split("T")[0],
-      createdDate: new Date(Date.now() - 10 * 86400000).toISOString(),
-      items: [
-        {
-          name: "Channel3 SKU Price Radar Integration",
-          quantity: 1,
-          unitAmount: 890.0,
-          description: "Automated catalog tracking",
-        },
-      ],
-      source: "demo_sample",
-    },
-  ];
-}
-
-function buildSeedExpenses(): MerchantExpense[] {
-  const month = getCurrentMonthKey();
-  const todayDay = new Date().toISOString().slice(0, 10);
-  const now = new Date().toISOString();
-  return [
-    {
-      id: "EXP-DEMO-01",
-      date: `${month}-02`,
-      category: "inventory",
-      description: "Audio & keyboard wholesale restock (demo)",
-      amount: 320.0,
-      currency: "USD",
-      recurring: false,
-      createdAt: now,
-    },
-    {
-      id: "EXP-DEMO-02",
-      date: `${month}-05`,
-      category: "software",
-      description: "Cloud hosting & analytics stack (demo)",
-      amount: 79.0,
-      currency: "USD",
-      recurring: true,
-      createdAt: now,
-    },
-    {
-      id: "EXP-DEMO-03",
-      date: todayDay,
-      category: "shipping",
-      description: "Carrier labels & fulfillment packaging (demo)",
-      amount: 64.5,
-      currency: "USD",
-      recurring: false,
-      createdAt: now,
-    },
-  ];
-}
-
-function buildSeedBudgetTargets(): MonthlyBudgetTarget[] {
-  return [
-    {
-      month: getCurrentMonthKey(),
-      currency: "USD",
-      salesTarget: 1500.0,
-      expenseBudget: 650.0,
-      updatedAt: new Date().toISOString(),
-    },
-  ];
-}
-
 function createInitialDb(): DatabaseSchema {
   return {
-    transactions: buildSeedTransactions(),
-    invoices: buildSeedInvoices(),
+    transactions: [],
+    invoices: [],
     processedEvents: [],
     reconciledIds: [],
-    expenses: buildSeedExpenses(),
-    budgetTargets: buildSeedBudgetTargets(),
+    expenses: [],
+    budgetTargets: [],
     lastUpdated: new Date().toISOString(),
   };
 }
@@ -374,15 +117,25 @@ function withFileLock<T>(dbFile: string, fn: () => T): T {
 }
 
 function normalizeDbSchema(raw: Partial<DatabaseSchema>): DatabaseSchema {
+  const txns = Array.isArray(raw.transactions)
+    ? raw.transactions.filter((t) => (t as { source?: string })?.source !== "demo_sample")
+    : [];
+  const invs = Array.isArray(raw.invoices)
+    ? raw.invoices.filter(
+        (i) => (i as { source?: string })?.source !== "demo_sample" && !i.id?.startsWith("INV2-DEMO-")
+      )
+    : [];
+  const exps = Array.isArray(raw.expenses)
+    ? raw.expenses.filter((e) => !e.id?.startsWith("EXP-DEMO-"))
+    : [];
+
   return {
-    transactions: Array.isArray(raw.transactions) ? raw.transactions : [],
-    invoices: Array.isArray(raw.invoices) ? raw.invoices : [],
+    transactions: txns,
+    invoices: invs,
     processedEvents: Array.isArray(raw.processedEvents) ? raw.processedEvents : [],
     reconciledIds: Array.isArray(raw.reconciledIds) ? raw.reconciledIds : [],
-    expenses: Array.isArray(raw.expenses) ? raw.expenses : buildSeedExpenses(),
-    budgetTargets: Array.isArray(raw.budgetTargets)
-      ? raw.budgetTargets
-      : buildSeedBudgetTargets(),
+    expenses: exps,
+    budgetTargets: Array.isArray(raw.budgetTargets) ? raw.budgetTargets : [],
     lastUpdated: typeof raw.lastUpdated === "string" ? raw.lastUpdated : new Date().toISOString(),
   };
 }

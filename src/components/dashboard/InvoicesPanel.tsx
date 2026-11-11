@@ -144,7 +144,7 @@ export function InvoicesPanel({
                         {inv.recipientName}
                       </span>
                       <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#F7F7F8] text-[#626262] border border-[#E5E5E5]">
-                        {inv.source === "paypal_sandbox" ? "PayPal Sandbox" : "Demo Mode"}
+                        {inv.source === "paypal_live" ? "PayPal Live" : "PayPal Sandbox"}
                       </span>
                     </div>
                     <div className="text-xs text-[#626262] font-mono">

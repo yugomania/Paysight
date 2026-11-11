@@ -132,7 +132,7 @@ export function NeedsAttention({
           {!isLiveConnected && (
             <span className="hidden sm:inline-flex items-center gap-1 text-[11px] text-[#626262] font-mono">
               <Info className="w-3.5 h-3.5" />
-              Demo Ledger
+              PayPal Disconnected
             </span>
           )}
         </div>

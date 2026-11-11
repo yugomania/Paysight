@@ -46,7 +46,10 @@ test("Security, Rate Limiting, Health Check & SQL Migration Schema", async (t) =
 
   await t.test("GET /api/pricing returns HTTP 429 when client exceeds quota", async () => {
     const prevKey = process.env.CHANNEL3_API_KEY;
-    delete process.env.CHANNEL3_API_KEY;
+    const origFetch = globalThis.fetch;
+    process.env.CHANNEL3_API_KEY = "c3_test_quota_key_123456";
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ products: [] }), { status: 200 });
 
     try {
       for (let i = 0; i < 40; i++) {
@@ -66,6 +69,7 @@ test("Security, Rate Limiting, Health Check & SQL Migration Schema", async (t) =
       assert.equal(blocked.status, 429);
       assert.ok(blocked.headers.get("retry-after"));
     } finally {
+      globalThis.fetch = origFetch;
       if (prevKey === undefined) delete process.env.CHANNEL3_API_KEY;
       else process.env.CHANNEL3_API_KEY = prevKey;
     }

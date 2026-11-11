@@ -28,14 +28,14 @@ PaySight serves **PayPal merchants, digital sellers, and finance operators** who
    - Monthly sales targets and operating expense budgets per currency (`src/lib/budget/service.ts`, `/api/budget`).
    - Separates **PayPal Gross Sales**, **PayPal Processing Fees**, **Net PayPal Proceeds**, **Refunds**, and **Merchant-Recorded Operating Expenses** across 7 categories (`inventory`, `marketing`, `software`, `shipping`, `operations`, `taxes`, `other`), computing **Estimated Operating Cash Flow**, month-over-month comparisons, and budget alerts.
 5. **Channel3 Competitor Price Radar**:
-   - Multi-retailer price search (`POST https://api.trychannel3.com/v1/search`) with nested offer mapping, 15-minute bounded caching (and explicit `Cached` drilldown pill), exact vs. approximate match separation, floor/average/ceiling benchmarks, price position difference, and explicit `Channel3 Live` vs. `Demo Catalog Fallback` source badges. Live failures never fabricate prices.
+   - Multi-retailer price search (`POST https://api.trychannel3.com/v1/search`) with nested offer mapping, 15-minute bounded caching (and explicit `Cached` drilldown pill), exact vs. approximate match separation, floor/average/ceiling benchmarks, and price position difference. Fails closed with HTTP `503` when `CHANNEL3_API_KEY` is unconfigured rather than fabricating listings.
 6. **Sandbox Checkout Terminal**:
-   - Server-authoritative 4-SKU catalog (`demo_10` `$10`, `sub_pro` `$49`, `intel_add` `$29`, `exp_pack` `$19`).
-   - Uses official `@paypal/react-paypal-js` popup approval + server capture verification in **PayPal Sandbox Mode**, and provides an explicit local simulation button in **Demo Mode**.
+   - Server-authoritative 4-SKU catalog (`starter_10` `$10`, `sub_pro` `$49`, `intel_add` `$29`, `exp_pack` `$19`).
+   - Uses official `@paypal/react-paypal-js` popup approval (`PayPalSandboxCheckout`) + server capture verification against PayPal Sandbox, failing closed (`503`) if credentials are absent.
 7. **Fail-Closed PayPal Webhook Receiver (`/api/webhooks/paypal`)**:
    - Enforces PayPal transmission headers + `PAYPAL_WEBHOOK_ID` + HTTPS PayPal certificate URL + PayPal REST signature verification before accepting events (`PAYMENT.CAPTURE.*`, `INVOICING.INVOICE.*`), deduplicates by event ID, and preserves existing invoice line items across status webhooks.
 8. **Grounded AI Merchant Copilot (`Cmd+J` / `Ask PaySight`)**:
-   - Google Gemini (`@ai-sdk/google` + Vercel AI SDK `ai@4.3.19`) wired to 9 server-side read/budget/pricing/invoicing tools with prompt-injection sanitization, tool invocation status pills, safe JSX Markdown rendering, and deterministic offline Markdown fallback tools.
+   - Google Gemini (`@ai-sdk/google` + Vercel AI SDK `ai@4.3.19`) wired to 9 server-side read/budget/pricing/invoicing tools with Gemini 3.x `thoughtSignature` preservation, active model failover, prompt-injection sanitization, tool invocation status pills, and safe JSX Markdown rendering (returns HTTP `503` when `GOOGLE_GENERATIVE_AI_API_KEY` is unconfigured).
 
 ---
 
@@ -52,12 +52,15 @@ See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for full Mermaid architecture, sequen
 
 ---
 
-## Demo Mode vs. PayPal Sandbox Mode
+## Live-Only Operation (Fail-Closed Configuration)
 
-| Mode | Trigger Condition | Transactions & Invoices | Checkout Terminal | Channel3 & Gemini |
-|---|---|---|---|---|
-| **Demo Mode** | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` omitted or placeholders | Deterministic seeded local records in `.data/paysight-db.json` (`source: "demo_sample"`) | Simulated local capture button (`CAP-SIM-*`, no PayPal popup) | Structured demo catalog (`isSimulated: true`) & local deterministic tool fallback if keys omitted |
-| **PayPal Sandbox Mode** | Valid Sandbox `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | Live `api-m.sandbox.paypal.com` Search, Invoicing v2, Disputes v1 (`source: "paypal_sandbox"`), isolated from demo seeds | Real PayPal JS SDK buyer login & server-verified order capture | Uses live `CHANNEL3_API_KEY` and `GOOGLE_GENERATIVE_AI_API_KEY` when provided |
+All runtime mocks, seeded transactions/invoices/expenses, simulated checkout buttons, offline regex AI fallbacks, and hardcoded pricing catalogs were removed from `src/`.
+
+| Integration | Behavior When Configured | Behavior When Unconfigured (`503` / Honest Error) |
+|---|---|---|
+| **PayPal Sandbox** | Live `api-m.sandbox.paypal.com` Transaction Search, Orders v2 Checkout, Invoicing v2, Disputes v1, and Webhooks | Disconnected status banner; Checkout (`POST /api/orders/*`) and Invoicing (`POST /api/invoices`) return HTTP `503` |
+| **Channel3 Market Radar** | Live `POST https://api.trychannel3.com/v1/search` multi-retailer comparison with 15m cache | `GET /api/pricing` returns HTTP `503` and explicit UI error |
+| **Google Gemini Copilot** | Live `gemini-3.5-flash` / `3-flash-preview` streaming with 9 server tools | `POST /api/chat` returns HTTP `503` |
 
 ---
 
@@ -134,7 +137,7 @@ A Render web-service blueprint is defined in [`render.yaml`](./render.yaml):
 
 - **Single-Workspace Prototype (No User Login)**: PaySight currently does not include end-user login/session authentication or multi-tenant isolation. Per-IP sliding-window rate limiting (`src/lib/security/rate-limit.ts`) and baseline HTTP security headers (`next.config.ts`) are active for single-instance hosting, but do not expose a deployment holding real customer/merchant PII publicly without adding authentication and shared storage first. See [`SECURITY.md`](./SECURITY.md).
 - **PayPal Sandbox Permissions**: Live Transaction Search and Customer Disputes require explicit feature toggles in your PayPal Sandbox Developer App; if disabled, PaySight discloses the limitation honestly via warning banners.
-- **Channel3 Unconfigured Fallback**: When `CHANNEL3_API_KEY` is unset, comparisons return sample/demo reference listings clearly tagged `Demo` (`isSimulated: true`). When `CHANNEL3_API_KEY` is configured and fails or returns empty, PaySight returns `0` listings rather than inventing competitor prices.
+- **Channel3 Live Failures / Unconfigured Key**: When `CHANNEL3_API_KEY` is unset, `/api/pricing` fails closed with HTTP `503`; when configured and live upstream returns empty or fails, PaySight returns `0` listings rather than inventing competitor prices.
 - **Standalone Payment Links**: Synthetic PayPal payment links were removed; use PayPal Invoicing v2 (`paymentUrl` generated once sent in Sandbox).
 
 ---

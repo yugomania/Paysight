@@ -7,16 +7,14 @@ import { NextRequest } from "next/server";
 import { POST as webhookHandler } from "../src/app/api/webhooks/paypal/route";
 import {
   captureServerSideOrder,
-  createInvoice,
   listInvoicesWithMeta,
-  listTransactions,
 } from "../src/lib/paypal/api";
 import { invalidatePayPalAuth } from "../src/lib/paypal/client";
 import {
   getStoredInvoiceById,
   getStoredTransactions,
   isEventProcessed,
-  isReconciled,
+  saveInvoice,
   saveTransaction,
 } from "../src/lib/db";
 
@@ -40,19 +38,16 @@ test("Payment State, Reconciliation & Fail-Closed Webhook Processing", async (t)
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  await t.test("captureServerSideOrder rejects invalid SKU, saves valid order, and marks reconciled", async () => {
+  await t.test("captureServerSideOrder rejects invalid SKU and requires live PayPal credentials", async () => {
     delete process.env.PAYPAL_CLIENT_ID;
     delete process.env.PAYPAL_CLIENT_SECRET;
 
     const bad = await captureServerSideOrder("ORD-1", "unknown_sku");
     assert.equal(bad.success, false);
 
-    const captureResult = await captureServerSideOrder(`TEST-ORDER-${Date.now()}`, "sub_pro");
-    assert.equal(captureResult.success, true);
-    assert.equal(captureResult.transaction?.amount, 49.0);
-    assert.equal(captureResult.transaction?.currency, "USD");
-    assert.ok(isReconciled(captureResult.transaction!.id));
-    assert.ok(getStoredTransactions().some((tx) => tx.id === captureResult.transaction!.id));
+    const missingCreds = await captureServerSideOrder(`TEST-ORDER-${Date.now()}`, "sub_pro");
+    assert.equal(missingCreds.success, false);
+    assert.match(missingCreds.error ?? "", /PayPal Sandbox credentials/);
   });
 
   await t.test("deduplication prevents double counting across repeated saves", async () => {
@@ -69,12 +64,12 @@ test("Payment State, Reconciliation & Fail-Closed Webhook Processing", async (t)
       customerEmail: "recon@test.dev",
       productName: "Service",
       paymentMethod: "paypal" as const,
-      source: "demo_sample" as const,
+      source: "paypal_sandbox" as const,
     };
 
     saveTransaction(tx);
     saveTransaction(tx);
-    const list = await listTransactions(30);
+    const list = getStoredTransactions();
     assert.equal(list.filter((item) => item.id === id).length, 1);
   });
 
@@ -126,14 +121,20 @@ test("Payment State, Reconciliation & Fail-Closed Webhook Processing", async (t)
   });
 
   await t.test("webhook processes verified event, deduplicates repeats, and preserves invoice line items", async () => {
-    // Create local draft invoice first to test line-item preservation on webhook PAID
-    delete process.env.PAYPAL_CLIENT_ID;
-    const inv = await createInvoice({
+    const inv = {
+      id: "INV2-WH-101",
+      invoiceNumber: "INV-9001",
       recipientName: "Acme Global",
       recipientEmail: "ap@acme.dev",
+      amount: 500.0,
+      currency: "USD",
+      status: "DRAFT" as const,
+      dueDate: "2026-12-01",
+      createdDate: new Date().toISOString(),
       items: [{ name: "Annual Intelligence Plan", quantity: 2, unitAmount: 250.0 }],
-      autoSend: false,
-    });
+      source: "paypal_sandbox" as const,
+    };
+    saveInvoice(inv);
 
     process.env.PAYPAL_CLIENT_ID = "sandbox-client-id-more-than-twenty-chars-2";
     process.env.PAYPAL_CLIENT_SECRET = "sandbox-client-secret-value-2";

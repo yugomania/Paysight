@@ -351,7 +351,7 @@ export function TransactionGrid({
               <div className="flex items-center justify-between">
                 <TransactionStatusBadge status={selectedTxn.status} />
                 <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-[#F7F7F8] border border-[#E5E5E5] text-[#171717]">
-                  {selectedTxn.source === "paypal_sandbox" ? "PayPal Sandbox" : "Demo Sample"}
+                  {selectedTxn.source === "paypal_live" ? "PayPal Live" : "PayPal Sandbox"}
                 </span>
               </div>
 

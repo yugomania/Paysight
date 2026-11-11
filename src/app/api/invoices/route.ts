@@ -6,6 +6,7 @@ import {
   sendDraftInvoice,
   cancelExistingInvoice,
 } from "@/lib/paypal/api";
+import { hasValidPayPalConfig } from "@/lib/paypal/client";
 import {
   checkRateLimit,
   getClientIdentifier,
@@ -43,6 +44,16 @@ export async function POST(req: NextRequest) {
     if (body.action === "validate_proposal") {
       const proposal = prepareInvoiceProposal(body);
       return Response.json(proposal);
+    }
+
+    if (!hasValidPayPalConfig()) {
+      return Response.json(
+        {
+          error:
+            "PayPal Sandbox credentials (PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET) are not configured in .env.local.",
+        },
+        { status: 503 }
+      );
     }
 
     if (body.action === "send_draft") {

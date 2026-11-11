@@ -53,7 +53,7 @@ test("Analytics: authoritative server-side calculation, chunking, and currency s
       customerEmail: "us@example.com",
       productName: "Test Item USD",
       paymentMethod: "paypal",
-      source: "demo_sample",
+      source: "paypal_sandbox",
     };
 
     const txEUR: Transaction = {
@@ -68,14 +68,24 @@ test("Analytics: authoritative server-side calculation, chunking, and currency s
       customerEmail: "eu@example.com",
       productName: "Test Item EUR",
       paymentMethod: "paypal",
-      source: "demo_sample",
+      source: "paypal_sandbox",
     };
 
     saveTransaction(txUSD);
     saveTransaction(txEUR);
 
-    const kpisBeforeEurCheck = await getMerchantKPIs(30, "USD");
-    const kpisEur = await getMerchantKPIs(30, "EUR");
+    const kpisBeforeEurCheck = computeMerchantKPIs({
+      transactions: [txUSD, txEUR],
+      days: 30,
+      currency: "USD",
+      source: "paypal_sandbox",
+    });
+    const kpisEur = computeMerchantKPIs({
+      transactions: [txUSD, txEUR],
+      days: 30,
+      currency: "EUR",
+      source: "paypal_sandbox",
+    });
 
     assert.equal(kpisBeforeEurCheck.currency, "USD");
     assert.equal(kpisEur.currency, "EUR");
@@ -89,6 +99,13 @@ test("Analytics: authoritative server-side calculation, chunking, and currency s
       "USD headline grossVolume30d must match USD breakdown exactly"
     );
     assert.equal(kpisBeforeEurCheck.currencyTotals["EUR"].gross, 500.0);
+
+    // Without live PayPal credentials, getMerchantKPIs must not leak local/mock rows
+    delete process.env.PAYPAL_CLIENT_ID;
+    delete process.env.PAYPAL_CLIENT_SECRET;
+    const unconfiguredKpis = await getMerchantKPIs(30, "USD");
+    assert.equal(unconfiguredKpis.source, "unconfigured");
+    assert.equal(unconfiguredKpis.grossVolume30d, 0);
   });
 
   await t.test("refund and fee accounting is distinct and computes period-over-period delta", async () => {
@@ -105,7 +122,7 @@ test("Analytics: authoritative server-side calculation, chunking, and currency s
       customerEmail: "curr@example.com",
       productName: "Plan",
       paymentMethod: "paypal",
-      source: "demo_sample",
+      source: "paypal_sandbox",
     };
     const prevTx: Transaction = {
       id: "PREV-SALE-1",
@@ -119,7 +136,7 @@ test("Analytics: authoritative server-side calculation, chunking, and currency s
       customerEmail: "prev@example.com",
       productName: "Plan",
       paymentMethod: "paypal",
-      source: "demo_sample",
+      source: "paypal_sandbox",
     };
     const refundTx: Transaction = {
       id: "TEST-REF-1",
@@ -133,14 +150,14 @@ test("Analytics: authoritative server-side calculation, chunking, and currency s
       customerEmail: "refund@example.com",
       productName: "Returned Item",
       paymentMethod: "paypal",
-      source: "demo_sample",
+      source: "paypal_sandbox",
     };
 
     const kpis = computeMerchantKPIs({
       transactions: [currentTx, prevTx, refundTx],
       days: 30,
       currency: "USD",
-      source: "demo_sample",
+      source: "paypal_sandbox",
       disputeCount: 1,
       nowMs: now,
     });
@@ -160,7 +177,7 @@ test("Analytics: authoritative server-side calculation, chunking, and currency s
       transactions: [],
       days: 30,
       currency: "USD",
-      source: "demo_sample",
+      source: "paypal_sandbox",
     });
     assert.equal(emptyKpis.averageOrderValue, 0);
     assert.equal(emptyKpis.disputeRate, 0);

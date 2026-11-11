@@ -1,4 +1,4 @@
-import { getPricingComparison } from "@/lib/channel3/client";
+import { getPricingComparison, hasValidChannel3Config } from "@/lib/channel3/client";
 import {
   checkRateLimit,
   getClientIdentifier,
@@ -14,6 +14,16 @@ export async function GET(req: NextRequest) {
   });
   if (!rl.allowed) {
     return rateLimitExceededResponse(rl);
+  }
+
+  if (!hasValidChannel3Config()) {
+    return Response.json(
+      {
+        error:
+          "CHANNEL3_API_KEY is not configured in .env.local. Live market pricing requires Channel3 API credentials.",
+      },
+      { status: 503 }
+    );
   }
 
   const { searchParams } = new URL(req.url);

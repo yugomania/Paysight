@@ -26,7 +26,7 @@ export async function GET() {
       ? process.env.PAYPAL_ENVIRONMENT === "live"
         ? "live"
         : "sandbox"
-      : "demo",
+      : "unconfigured",
   });
 }
 
@@ -53,58 +53,52 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Live PayPal Sandbox / Production Order creation
-    if (hasValidPayPalConfig()) {
-      const ordersController = getOrdersController();
-      const response = await ordersController.createOrder({
-        body: {
-          intent: CheckoutPaymentIntent.Capture,
-          purchaseUnits: [
-            {
-              amount: {
-                currencyCode: product.currency,
-                value: product.amount,
-              },
-              description: product.description,
-              customId: product.id,
+    if (!hasValidPayPalConfig()) {
+      return Response.json(
+        {
+          error:
+            "PayPal Sandbox credentials (PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET) are not configured in .env.local.",
+        },
+        { status: 503 }
+      );
+    }
+
+    const ordersController = getOrdersController();
+    const response = await ordersController.createOrder({
+      body: {
+        intent: CheckoutPaymentIntent.Capture,
+        purchaseUnits: [
+          {
+            amount: {
+              currencyCode: product.currency,
+              value: product.amount,
             },
-          ],
-          paymentSource: {
-            paypal: {
-              experienceContext: {
-                brandName: "PaySight",
-                shippingPreference: PaypalWalletContextShippingPreference.NoShipping,
-                userAction: PaypalExperienceUserAction.PayNow,
-              },
+            description: product.description,
+            customId: product.id,
+          },
+        ],
+        paymentSource: {
+          paypal: {
+            experienceContext: {
+              brandName: "PaySight",
+              shippingPreference: PaypalWalletContextShippingPreference.NoShipping,
+              userAction: PaypalExperienceUserAction.PayNow,
             },
           },
         },
-      });
+      },
+    });
 
-      const order = response.result;
-      return Response.json({
-        id: order.id,
-        status: order.status,
-        productId: product.id,
-        productName: product.name,
-        amount: product.amount,
-        currency: product.currency,
-        environment: process.env.PAYPAL_ENVIRONMENT === "live" ? "live" : "sandbox",
-        isLive: true,
-      });
-    }
-
-    // Zero-Config Demo Mode fallback when PayPal Sandbox credentials are absent
-    const demoOrderId = `ORD-DEMO-${Date.now().toString().slice(-8)}`;
+    const order = response.result;
     return Response.json({
-      id: demoOrderId,
-      status: "CREATED",
+      id: order.id,
+      status: order.status,
       productId: product.id,
       productName: product.name,
       amount: product.amount,
       currency: product.currency,
-      environment: "demo",
-      isLive: false,
+      environment: process.env.PAYPAL_ENVIRONMENT === "live" ? "live" : "sandbox",
+      isLive: true,
     });
   } catch (err) {
     const { message, debugId } = extractPayPalSdkError(err, "Failed to create PayPal order");

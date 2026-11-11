@@ -1,7 +1,6 @@
 import { createHash } from "crypto";
 import { subDays, format } from "date-fns";
 import {
-  getTransactionSearchController,
   getOrdersController,
   getAccessToken,
   getPayPalBaseUrl,
@@ -145,23 +144,34 @@ export async function fetchTransactionsWithMeta(
   days = 30
 ): Promise<TransactionFetchResult> {
   const safeDays = Number.isFinite(days) ? Math.max(1, Math.min(365, Math.floor(days))) : 30;
-  const localTransactions = getStoredTransactions();
   const cutoff = subDays(new Date(), safeDays).getTime();
 
   if (!hasValidPayPalConfig()) {
-    const demoTxns = deduplicateTransactions(
-      localTransactions.filter((t) => new Date(t.date).getTime() >= cutoff)
-    );
     return {
-      transactions: demoTxns,
-      source: "demo_sample",
+      transactions: [],
+      source: "unconfigured",
       isLive: false,
-      isPartial: false,
+      isPartial: true,
       chunksQueried: 0,
+      dataWarning:
+        "PayPal credentials (PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET) are not configured in .env.local.",
     };
   }
 
-  let controller = getTransactionSearchController();
+  let token = await getAccessToken();
+  if (!token) {
+    return {
+      transactions: [],
+      source: "paypal_sandbox",
+      isLive: false,
+      isPartial: true,
+      chunksQueried: 0,
+      dataWarning:
+        "Unable to obtain PayPal OAuth access token. Verify PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET.",
+    };
+  }
+
+  const base = getPayPalBaseUrl();
   const endDate = new Date();
   const startDate = subDays(endDate, safeDays);
   const chunks = buildDateChunks(startDate, endDate, 30);
@@ -178,27 +188,73 @@ export async function fetchTransactionsWithMeta(
 
     while (!chunkDone && page <= MAX_PAGES_PER_CHUNK) {
       try {
-        const response = await controller.searchTransactions({
-          startDate: toPayPalUtcTimestamp(chunk.startDate),
-          endDate: toPayPalUtcTimestamp(chunk.endDate),
+        const qs = new URLSearchParams({
+          start_date: toPayPalUtcTimestamp(chunk.startDate),
+          end_date: toPayPalUtcTimestamp(chunk.endDate),
           fields: "all",
-          pageSize: PAGE_SIZE,
-          page,
+          page_size: String(PAGE_SIZE),
+          page: String(page),
         });
 
-        const raw = response.result?.transactionDetails ?? [];
-        const totalPages = response.result?.totalPages ?? 1;
+        const res = await fetch(`${base}/v1/reporting/transactions?${qs.toString()}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+        });
+
+        if ((res.status === 401 || res.status === 403) && !didRefreshAuth) {
+          didRefreshAuth = true;
+          await invalidatePayPalAuth(true);
+          const refreshed = await getAccessToken();
+          if (refreshed) {
+            token = refreshed;
+            continue;
+          }
+        }
+
+        if (!res.ok) {
+          const errJson = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+          const details = Array.isArray(errJson.details)
+            ? (errJson.details as Array<Record<string, string>>)
+            : [];
+          const msg = details[0]?.issue
+            ? `${details[0].issue}: ${details[0].description ?? errJson.message ?? `HTTP ${res.status}`}`
+            : typeof errJson.message === "string"
+            ? errJson.message
+            : `PayPal Transaction Search returned HTTP ${res.status}`;
+          lastErrorMsg = msg;
+          isPartial = true;
+          console.warn("[PayPal] searchTransactions chunk notice:", msg);
+          chunkDone = true;
+          continue;
+        }
+
+        const data = (await res.json()) as Record<string, unknown>;
+        const raw = Array.isArray(data.transaction_details)
+          ? (data.transaction_details as Array<Record<string, unknown>>)
+          : [];
+        const totalPages =
+          typeof data.total_pages === "number" && data.total_pages > 0 ? data.total_pages : 1;
 
         for (const t of raw) {
-          const info = t.transactionInfo;
-          const payerInfo = t.payerInfo;
-          const itemInfo = t.cartInfo?.itemDetails?.[0];
+          const info = (t.transaction_info ?? {}) as Record<string, unknown>;
+          const payerInfo = (t.payer_info ?? {}) as Record<string, unknown>;
+          const cartInfo = (t.cart_info ?? {}) as Record<string, unknown>;
+          const itemDetails = Array.isArray(cartInfo.item_details)
+            ? (cartInfo.item_details as Array<Record<string, unknown>>)
+            : [];
+          const itemInfo = itemDetails[0] ?? {};
 
-          const rawAmount = parseFloat(info?.transactionAmount?.value ?? "0") || 0;
-          const rawFee = parseFloat(info?.feeAmount?.value ?? "0") || 0;
+          const txAmountObj = (info.transaction_amount ?? {}) as Record<string, string>;
+          const feeAmountObj = (info.fee_amount ?? {}) as Record<string, string>;
+          const payerNameObj = (payerInfo.payer_name ?? {}) as Record<string, string>;
+
+          const rawAmount = parseFloat(txAmountObj.value ?? "0") || 0;
+          const rawFee = parseFloat(feeAmountObj.value ?? "0") || 0;
           const absAmount = Math.abs(rawAmount);
           const absFee = Math.abs(rawFee);
-          const status = mapTransactionStatus(info?.transactionStatus ?? "");
+          const status = mapTransactionStatus(String(info.transaction_status ?? ""));
           const netVal =
             status === "REFUNDED"
               ? -parseFloat((absAmount - absFee).toFixed(2))
@@ -206,21 +262,39 @@ export async function fetchTransactionsWithMeta(
               ? 0
               : parseFloat((absAmount - absFee).toFixed(2));
 
+          const fullName =
+            payerNameObj.alternate_full_name ||
+            [payerNameObj.given_name, payerNameObj.surname].filter(Boolean).join(" ").trim() ||
+            "PayPal Customer";
+
           fetched.push({
-            id: info?.transactionId ?? `TXN-${Date.now()}-${fetched.length}`,
-            date: info?.transactionInitiationDate ?? new Date().toISOString(),
+            id:
+              typeof info.transaction_id === "string" && info.transaction_id
+                ? info.transaction_id
+                : `TXN-${Date.now()}-${fetched.length}`,
+            date:
+              typeof info.transaction_initiation_date === "string" &&
+              info.transaction_initiation_date
+                ? info.transaction_initiation_date
+                : new Date().toISOString(),
             amount: absAmount,
             fee: absFee,
             net: netVal,
-            currency: (info?.transactionAmount?.currencyCode ?? "USD").toUpperCase(),
+            currency: String(txAmountObj.currency_code ?? "USD").toUpperCase(),
             status,
-            customerName: payerInfo?.payerName?.alternateFullName ?? "PayPal Customer",
-            customerEmail: payerInfo?.emailAddress ?? "sandbox-buyer@paypal.com",
-            productName: itemInfo?.itemName ?? "PayPal Payment",
-            productSku: itemInfo?.itemCode ?? undefined,
+            customerName: fullName,
+            customerEmail:
+              typeof payerInfo.email_address === "string" && payerInfo.email_address
+                ? payerInfo.email_address
+                : "sandbox-buyer@paypal.com",
+            productName:
+              typeof itemInfo.item_name === "string" && itemInfo.item_name
+                ? itemInfo.item_name
+                : "PayPal Payment",
+            productSku: typeof itemInfo.item_code === "string" ? itemInfo.item_code : undefined,
             paymentMethod: "paypal",
-            invoiceId: info?.invoiceId ?? undefined,
-            note: info?.transactionNote ?? undefined,
+            invoiceId: typeof info.invoice_id === "string" ? info.invoice_id : undefined,
+            note: typeof info.transaction_note === "string" ? info.transaction_note : undefined,
             source: "paypal_sandbox",
           });
         }
@@ -237,28 +311,9 @@ export async function fetchTransactionsWithMeta(
           page += 1;
         }
       } catch (err) {
-        const extracted = extractPayPalSdkError(err, "PayPal Transaction Search failed");
-        const statusCode =
-          err && typeof err === "object"
-            ? ((err as Record<string, unknown>).statusCode as number | undefined)
-            : undefined;
-        if (
-          !didRefreshAuth &&
-          (statusCode === 401 ||
-            statusCode === 403 ||
-            extracted.message.includes("NOT_AUTHORIZED"))
-        ) {
-          didRefreshAuth = true;
-          await invalidatePayPalAuth(true);
-          controller = getTransactionSearchController();
-          continue;
-        }
-        lastErrorMsg = extracted.message;
+        lastErrorMsg = err instanceof Error ? err.message : "PayPal Transaction Search failed";
         isPartial = true;
-        console.warn(
-          "[PayPal] searchTransactions chunk notice:",
-          extracted.message
-        );
+        console.warn("[PayPal] searchTransactions chunk notice:", lastErrorMsg);
         chunkDone = true;
       }
     }
@@ -268,26 +323,20 @@ export async function fetchTransactionsWithMeta(
     saveTransactionsBatch(fetched);
   }
 
-  // Strictly separate sandbox records from demo seed data when live PayPal is active
-  const storedSandboxTxns = getStoredTransactions().filter(
-    (t) => t.source === "paypal_sandbox"
-  );
-
-  if (succeededChunks === 0 && storedSandboxTxns.length === 0) {
-    // Live PayPal Search returned nothing/errored (e.g., Search scope disabled) AND no live sandbox captures exist yet.
-    const demoFallback = deduplicateTransactions(
-      localTransactions.filter((t) => new Date(t.date).getTime() >= cutoff)
-    );
+  if (succeededChunks === 0) {
     return {
-      transactions: demoFallback,
-      source: "demo_sample",
+      transactions: [],
+      source: "paypal_sandbox",
       isLive: false,
       isPartial: true,
       chunksQueried: chunks.length,
-      dataWarning: `PayPal Transaction Search unavailable (${lastErrorMsg || "verify Transaction Search permission in PayPal Developer Dashboard"}). Showing local demo sample records instead.`,
+      dataWarning: `PayPal Transaction Search failed (${lastErrorMsg || "verify Transaction Search permission in PayPal Developer Dashboard"}).`,
     };
   }
 
+  const storedSandboxTxns = getStoredTransactions().filter(
+    (t) => t.source === "paypal_sandbox" || t.source === "paypal_live"
+  );
   const mergedSandbox = deduplicateTransactions([...fetched, ...storedSandboxTxns]).filter(
     (t) => new Date(t.date).getTime() >= cutoff
   );
@@ -553,28 +602,29 @@ export async function getRevenueTimeSeries(
 export interface InvoiceListResult {
   invoices: Invoice[];
   isLive: boolean;
-  dataSource: "paypal_sandbox" | "demo_sample";
+  dataSource: DataSourceKind;
   note?: string;
 }
 
 export async function listInvoicesWithMeta(): Promise<InvoiceListResult> {
-  const stored = getStoredInvoices();
-
   if (!hasValidPayPalConfig()) {
     return {
-      invoices: stored,
+      invoices: [],
       isLive: false,
-      dataSource: "demo_sample",
+      dataSource: "unconfigured",
+      note: "PayPal credentials (PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET) are not configured in .env.local.",
     };
   }
 
   try {
     let token = await getAccessToken();
     if (!token) {
-      const sandboxOnly = stored.filter((i) => i.source === "paypal_sandbox");
-      return sandboxOnly.length > 0
-        ? { invoices: sandboxOnly, isLive: false, dataSource: "paypal_sandbox", note: "PayPal OAuth unavailable; showing cached Sandbox invoices." }
-        : { invoices: stored, isLive: false, dataSource: "demo_sample", note: "PayPal OAuth unavailable; showing local store records." };
+      return {
+        invoices: [],
+        isLive: false,
+        dataSource: "paypal_sandbox",
+        note: "Unable to obtain PayPal OAuth access token.",
+      };
     }
     const base = getPayPalBaseUrl();
 
@@ -594,20 +644,11 @@ export async function listInvoicesWithMeta(): Promise<InvoiceListResult> {
 
     if (!res.ok) {
       console.warn("[PayPal] listInvoices HTTP:", res.status);
-      const sandboxOnly = stored.filter((i) => i.source === "paypal_sandbox");
-      if (sandboxOnly.length > 0) {
-        return {
-          invoices: sandboxOnly,
-          isLive: false,
-          dataSource: "paypal_sandbox",
-          note: `PayPal Invoicing API returned HTTP ${res.status}. Showing previously synced Sandbox invoices.`,
-        };
-      }
       return {
-        invoices: stored,
+        invoices: [],
         isLive: false,
-        dataSource: "demo_sample",
-        note: `PayPal Invoicing API returned HTTP ${res.status} (verify Invoicing permission on your Sandbox app). Showing local demo store records.`,
+        dataSource: "paypal_sandbox",
+        note: `PayPal Invoicing API returned HTTP ${res.status}. Verify Invoicing permission on your Sandbox app.`,
       };
     }
 
@@ -630,20 +671,11 @@ export async function listInvoicesWithMeta(): Promise<InvoiceListResult> {
     };
   } catch (err) {
     console.warn("[PayPal] listInvoices error:", err);
-    const sandboxOnly = stored.filter((i) => i.source === "paypal_sandbox");
-    if (sandboxOnly.length > 0) {
-      return {
-        invoices: sandboxOnly,
-        isLive: false,
-        dataSource: "paypal_sandbox",
-        note: "PayPal Invoicing request failed; showing previously synced Sandbox invoices.",
-      };
-    }
     return {
-      invoices: stored,
+      invoices: [],
       isLive: false,
-      dataSource: "demo_sample",
-      note: "PayPal Invoicing request failed; showing local demo store records.",
+      dataSource: "paypal_sandbox",
+      note: "PayPal Invoicing request failed. Check network and PayPal Sandbox credentials.",
     };
   }
 }
@@ -734,31 +766,12 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<Invoice>
   invoiceCreationLocks.add(lockKey);
 
   try {
-    // Yield a microtask so overlapping double-clicks/parallel calls in Demo Mode also hit the lock
+    // Yield a microtask so overlapping double-clicks/parallel calls hit the in-flight lock
     await Promise.resolve();
-    const hasPayPal = hasValidPayPalConfig();
-
-    if (!hasPayPal) {
-      const demoId = `INV2-DEMO-${Date.now().toString().slice(-6)}`;
-      const invoiceNumber = `INV-${Math.floor(1000 + Math.random() * 9000)}`;
-
-      const newInvoice: Invoice = {
-        id: demoId,
-        invoiceNumber,
-        recipientName: input.recipientName.trim(),
-        recipientEmail: input.recipientEmail.trim(),
-        amount: proposal.totalAmount,
-        currency: proposal.currency,
-        status: input.autoSend ? "SENT" : "DRAFT",
-        dueDate: proposal.dueDate,
-        createdDate: new Date().toISOString(),
-        items: proposal.items,
-        note: input.note,
-        source: "demo_sample",
-      };
-
-      saveInvoice(newInvoice);
-      return newInvoice;
+    if (!hasValidPayPalConfig()) {
+      throw new Error(
+        "PayPal Sandbox credentials (PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET) are required to create invoices."
+      );
     }
 
     const token = await getAccessToken();
@@ -900,10 +913,10 @@ export async function sendDraftInvoice(invoiceId: string): Promise<Invoice> {
     throw new Error(`Only DRAFT invoices can be sent (current status: ${existing.status}).`);
   }
 
-  if (!hasValidPayPalConfig() || existing.source === "demo_sample") {
-    const updated: Invoice = { ...existing, status: "SENT" };
-    saveInvoice(updated);
-    return updated;
+  if (!hasValidPayPalConfig()) {
+    throw new Error(
+      "PayPal Sandbox credentials (PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET) are required to send invoices."
+    );
   }
 
   const token = await getAccessToken();
@@ -945,10 +958,10 @@ export async function cancelExistingInvoice(invoiceId: string): Promise<Invoice>
     throw new Error(`Cannot cancel invoice with status ${existing.status}.`);
   }
 
-  if (!hasValidPayPalConfig() || existing.source === "demo_sample") {
-    const updated: Invoice = { ...existing, status: "CANCELLED" };
-    saveInvoice(updated);
-    return updated;
+  if (!hasValidPayPalConfig()) {
+    throw new Error(
+      "PayPal Sandbox credentials (PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET) are required to cancel invoices."
+    );
   }
 
   const token = await getAccessToken();
@@ -1122,27 +1135,11 @@ export async function captureServerSideOrder(
   }
 
   if (!hasValidPayPalConfig()) {
-    const captureId = `CAP-SIM-${Date.now().toString().slice(-8)}`;
-    const fee = parseFloat((requestedProduct.numericAmount * 0.029 + 0.30).toFixed(2));
-    const newTxn: Transaction = {
-      id: captureId,
-      date: new Date().toISOString(),
-      amount: requestedProduct.numericAmount,
-      fee,
-      net: parseFloat((requestedProduct.numericAmount - fee).toFixed(2)),
-      currency: requestedProduct.currency,
-      status: "COMPLETED",
-      customerName: "Sandbox Demo Buyer",
-      customerEmail: "sb-demo@sandbox.paypal.com",
-      productName: requestedProduct.name,
-      productSku: requestedProduct.id,
-      paymentMethod: "paypal",
-      source: "demo_sample",
-      note: `[DEMO MODE] Simulated capture — no real money moved`,
+    return {
+      success: false,
+      error:
+        "PayPal Sandbox credentials (PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET) are required for server-side order capture.",
     };
-    saveTransaction(newTxn);
-    markReconciled(captureId);
-    return { success: true, transaction: newTxn };
   }
 
   try {

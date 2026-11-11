@@ -11,29 +11,19 @@ test("Channel3 Market Comparisons: live transparency, matching, and benchmarks",
     clearPricingCache();
   });
 
-  await t.test("demo fallback mode marks simulated results transparently", async () => {
+  await t.test("missing CHANNEL3_API_KEY fails closed without fabricating mock listings", async () => {
     const prevKey = process.env.CHANNEL3_API_KEY;
     delete process.env.CHANNEL3_API_KEY;
     try {
       const products = await searchProducts("Anker 737 Power Bank");
-      assert.ok(products.length > 0);
-      for (const p of products) {
-        assert.ok(p.productName);
-        assert.ok(p.retailer);
-        assert.ok(p.price > 0);
-        assert.ok(p.url.startsWith("http"));
-        assert.ok(p.matchConfidence === "exact" || p.matchConfidence === "approximate");
-      }
+      assert.equal(products.length, 0);
 
       const comp = await getPricingComparison("Sony WH-1000XM5 Wireless Headphones", 139.99);
-      assert.equal(comp.isSimulated, true);
-      assert.equal(comp.source, "structured_fallback");
-      assert.equal(
-        (comp.exactMatchesCount ?? 0) + (comp.approximateMatchesCount ?? 0),
-        comp.competitorCount
-      );
-      assert.ok(comp.marketMinPrice > 0 && comp.marketMaxPrice >= comp.marketMinPrice);
-      assert.ok(comp.disclaimer?.includes("Demo"));
+      assert.equal(comp.source, "channel3_unavailable");
+      assert.equal(comp.competitorCount, 0);
+      assert.equal(comp.marketAvgPrice, 0);
+      assert.equal(comp.pricePosition, "unknown");
+      assert.ok(comp.disclaimer?.includes("CHANNEL3_API_KEY"));
     } finally {
       if (prevKey === undefined) delete process.env.CHANNEL3_API_KEY;
       else process.env.CHANNEL3_API_KEY = prevKey;
@@ -73,7 +63,6 @@ test("Channel3 Market Comparisons: live transparency, matching, and benchmarks",
         );
 
       const liveComp = await getPricingComparison("Logitech MX Master 3S", 89.99);
-      assert.equal(liveComp.isSimulated, false);
       assert.equal(liveComp.source, "channel3_live");
       assert.equal(liveComp.competitorCount, 2);
       assert.equal(liveComp.marketAvgPrice, 97.49);
@@ -119,7 +108,6 @@ test("Channel3 Market Comparisons: live transparency, matching, and benchmarks",
       const nestedComp = await getPricingComparison("Sony WH-1000XM5 Headphones", 299.99);
       assert.equal(capturedMethod, "POST");
       assert.ok(capturedUrl.endsWith("/v1/search"));
-      assert.equal(nestedComp.isSimulated, false);
       assert.equal(nestedComp.competitorCount, 2);
       assert.equal(nestedComp.exactMatchesCount, 2);
       assert.equal(nestedComp.marketMinPrice, 340);
@@ -130,7 +118,6 @@ test("Channel3 Market Comparisons: live transparency, matching, and benchmarks",
       clearPricingCache();
       globalThis.fetch = async () => new Response("Bad Gateway", { status: 502 });
       const errComp = await getPricingComparison("Logitech MX Master 3S", 89.99);
-      assert.equal(errComp.isSimulated, false);
       assert.equal(errComp.source, "channel3_live");
       assert.equal(errComp.competitorCount, 0);
       assert.equal(errComp.pricePosition, "unknown");

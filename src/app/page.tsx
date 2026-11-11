@@ -8,7 +8,7 @@ import { KPICards } from "@/components/dashboard/KPICards";
 import { RevenueChart } from "@/components/dashboard/RevenueChart";
 import { TransactionGrid } from "@/components/dashboard/TransactionGrid";
 import { CompetitorPricingGrid } from "@/components/dashboard/CompetitorPricingGrid";
-import { PayPalDemoCheckout } from "@/components/checkout/PayPalDemoCheckout";
+import { PayPalSandboxCheckout } from "@/components/checkout/PayPalSandboxCheckout";
 import { ChatPanel } from "@/components/ai/ChatPanel";
 import { NeedsAttention } from "@/components/dashboard/NeedsAttention";
 import { RecentTransactions } from "@/components/dashboard/RecentTransactions";
@@ -54,6 +54,7 @@ export default function DashboardPage() {
   const [loadingKpis, setLoadingKpis] = useState(true);
   const [loadingRevenue, setLoadingRevenue] = useState(true);
   const [loadingPricing, setLoadingPricing] = useState(false);
+  const [pricingError, setPricingError] = useState("");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [fetchError, setFetchError] = useState("");
 
@@ -122,23 +123,28 @@ export default function DashboardPage() {
   const fetchPricingData = useCallback((forceRefresh = false) => {
     if (!forceRefresh && comparisons.length > 0) return;
     setLoadingPricing(true);
-    const sampleProducts = [
-      { name: "Premium Noise Cancelling Headphones", price: 149.99 },
+    setPricingError("");
+    const catalogQueries = [
+      { name: "Sony WH-1000XM5 Wireless Headphones", price: 149.99 },
       { name: "Ergonomic Mechanical Keyboard", price: 89.99 },
       { name: "Ultra-Clear 4K Streaming Webcam", price: 119.99 },
       { name: "7-in-1 Aluminum USB-C Hub", price: 49.99 },
     ];
 
     Promise.all(
-      sampleProducts.map((p) =>
+      catalogQueries.map((p) =>
         fetch(`/api/pricing?product=${encodeURIComponent(p.name)}&price=${p.price}`)
-          .then((res) => res.json())
-          .catch(() => null)
+          .then(async (res) => ({ ok: res.ok, data: await res.json() }))
+          .catch(() => ({ ok: false, data: { error: "Channel3 request failed." } }))
       )
     )
       .then((results) => {
-        const valid = results.filter((r) => r && !r.error);
+        const valid = results.filter((r) => r.ok && r.data && !r.data.error).map((r) => r.data);
         setComparisons(valid);
+        if (valid.length === 0) {
+          const firstErr = results.find((r) => r.data?.error)?.data?.error;
+          if (firstErr) setPricingError(firstErr);
+        }
       })
       .finally(() => setLoadingPricing(false));
   }, [comparisons.length]);
@@ -236,22 +242,14 @@ export default function DashboardPage() {
             <div className="flex items-center gap-2">
               <Info className="w-4 h-4 flex-shrink-0" />
               <span>
-                {kpis?.dataWarning ? (
-                  <>
-                    <strong>Sandbox Fallback Ledger:</strong> {kpis.dataWarning}
-                  </>
-                ) : (
-                  <>
-                    <strong>Demo Mode Active:</strong> Showing deterministic sample data from{" "}
-                    <code>.data/paysight-db.json</code>. Configure{" "}
-                    <code>PAYPAL_CLIENT_ID</code> and <code>PAYPAL_CLIENT_SECRET</code> in{" "}
-                    <code>.env.local</code> for live PayPal Sandbox.
-                  </>
-                )}
+                <strong>PayPal Sandbox Disconnected:</strong>{" "}
+                {kpis?.dataWarning
+                  ? kpis.dataWarning
+                  : "Configure PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET in .env.local to connect live PayPal Sandbox data."}
               </span>
             </div>
             <span className="hidden sm:inline font-mono text-[11px] bg-white text-[#C2410C] px-2 py-0.5 rounded border border-[#FED7AA]">
-              {kpis?.dataWarning ? "Fallback Sample Data" : "Demo Sample Data"}
+              Sandbox Disconnected
             </span>
           </div>
         )}
@@ -419,10 +417,14 @@ export default function DashboardPage() {
               <CompetitorPricingGrid
                 comparisons={comparisons}
                 loading={loadingPricing}
-                onAddComparison={(newComp) => setComparisons((prev) => [newComp, ...prev])}
+                initialError={pricingError}
+                onAddComparison={(newComp) => {
+                  setPricingError("");
+                  setComparisons((prev) => [newComp, ...prev]);
+                }}
                 onExplainComparison={() =>
                   openChatWithPrompt(
-                    "Compare my catalog pricing with Channel3 market listings for Ergonomic Mechanical Keyboard and Premium Noise Cancelling Headphones."
+                    "Compare my catalog pricing with Channel3 market listings for Ergonomic Mechanical Keyboard and Sony WH-1000XM5 Wireless Headphones."
                   )
                 }
               />
@@ -493,11 +495,11 @@ export default function DashboardPage() {
               <div>
                 <h2 className="text-base font-bold text-[#171717]">Checkout Terminal</h2>
                 <p className="text-xs text-[#626262]">
-                  Test buyer checkout and server-side order capture against PayPal Sandbox or Demo Mode
+                  Execute buyer checkout and server-verified order capture against PayPal Sandbox
                 </p>
               </div>
 
-              <PayPalDemoCheckout onPaymentSuccess={handleNewPaymentSuccess} />
+              <PayPalSandboxCheckout onPaymentSuccess={handleNewPaymentSuccess} />
             </div>
           )}
         </main>

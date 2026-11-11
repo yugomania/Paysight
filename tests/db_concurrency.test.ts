@@ -34,7 +34,7 @@ test("Database Persistence: concurrency safety and corrupted JSON backup recover
           customerEmail: `c${i}@test.dev`,
           productName: "Burst Product",
           paymentMethod: "paypal",
-          source: "demo_sample",
+          source: "paypal_sandbox",
         })
       )
     );
@@ -51,7 +51,7 @@ test("Database Persistence: concurrency safety and corrupted JSON backup recover
         customerEmail: "b@test.dev",
         productName: "Batch SKU",
         paymentMethod: "paypal",
-        source: "demo_sample",
+        source: "paypal_sandbox",
       },
     ]);
 
@@ -62,10 +62,10 @@ test("Database Persistence: concurrency safety and corrupted JSON backup recover
     assert.ok(stored.some((tx) => tx.id === "BATCH-1"));
   });
 
-  await t.test("preserves corrupted JSON backup before re-seeding", () => {
+  await t.test("preserves corrupted JSON backup before initializing empty store", () => {
     fs.writeFileSync(dbPath, "{ invalid json !!", "utf-8");
     const recovered = getStoredTransactions();
-    assert.ok(recovered.length >= 10, "Should recover with deterministic seed records");
+    assert.equal(recovered.length, 0, "Must recover cleanly with empty store (no mock seeds)");
 
     const backups = fs.readdirSync(tmpDir).filter((f) => f.includes(".corrupt."));
     assert.equal(backups.length, 1, "Must save .corrupt backup before overwriting");

@@ -7,7 +7,7 @@
  *   src/lib/paypal/api.ts, src/lib/budget/service.ts, and src/app/api/webhooks/paypal/route.ts
  *   as well as all 8 automated test suites. Introducing an async Postgres driver without
  *   provisioning DATABASE_URL or migrating every service/test boundary to async calls would
- *   destabilize Demo Mode and local development.
+ *   destabilize local JSON persistence and offline unit tests.
  *
  * Activation steps when moving beyond single-node JSON persistence:
  *   1. Install `@neondatabase/serverless` or `pg`.

@@ -32,7 +32,7 @@ export function OverviewQuickActions({
     },
     {
       title: "Sandbox Checkout",
-      description: "Test simulated card and PayPal buyer payment flows",
+      description: "Execute buyer popup approval and server-verified PayPal capture flows",
       icon: Receipt,
       onClick: onNavigateToCheckout,
       isPrimary: false,

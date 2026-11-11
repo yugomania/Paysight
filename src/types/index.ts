@@ -1,6 +1,6 @@
 // ─── PayPal Transaction Types ───────────────────────────────────────────────
 
-export type DataSourceKind = "paypal_sandbox" | "demo_sample";
+export type DataSourceKind = "paypal_sandbox" | "paypal_live" | "unconfigured";
 
 export interface Transaction {
   id: string;
@@ -143,8 +143,7 @@ export interface Dispute {
 
 export type PricingDataSource =
   | "channel3_live"
-  | "structured_fallback"
-  | "synthetic_fallback";
+  | "channel3_unavailable";
 
 export interface CompetitorProduct {
   productName: string;
@@ -179,7 +178,6 @@ export interface PricingComparison {
   approximateMatchesCount?: number;
   comparisonTimestamp?: string;
   source: PricingDataSource;
-  isSimulated: boolean;
   fromCache?: boolean;
   disclaimer?: string;
 }

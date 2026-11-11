@@ -20,7 +20,7 @@ export async function GET() {
         ? process.env.PAYPAL_ENVIRONMENT === "live"
           ? "live"
           : "sandbox"
-        : "demo",
+        : "unconfigured",
       persistence: {
         driver: persistence.activeDriver,
         databaseUrlConfigured: persistence.databaseUrlConfigured,

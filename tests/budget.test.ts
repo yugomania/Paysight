@@ -69,7 +69,7 @@ test("Merchant Budget Intelligence: targets, currency isolation, expenses, and c
         expenseBudget: 300,
         updatedAt: "2026-10-01T00:00:00Z",
       },
-      dataSource: "demo_sample",
+      dataSource: "paypal_sandbox",
       nowDate: new Date("2026-10-15T12:00:00Z"),
     });
 
