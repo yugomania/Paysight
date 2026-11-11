@@ -1,18 +1,52 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getMerchantKPIs, listDisputes } from "../src/lib/paypal/api";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  buildDateChunks,
+  computeMerchantKPIs,
+  getMerchantKPIs,
+  getRevenueTimeSeries,
+  listDisputes,
+} from "../src/lib/paypal/api";
 import { saveTransaction } from "../src/lib/db";
 import type { Transaction } from "../src/types";
 
-test("Analytics: authoritative server-side calculation and currency separation", async (t) => {
-  await t.test("separates currencies correctly without mixing totals", async () => {
-    // Setup test transactions with multiple currencies
+test("Analytics: authoritative server-side calculation, chunking, and currency separation", async (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "paysight-analytics-"));
+  const prevDb = process.env.PAYSIGHT_DB_PATH;
+  process.env.PAYSIGHT_DB_PATH = path.join(tmpDir, "db.json");
+
+  t.after(() => {
+    if (prevDb === undefined) delete process.env.PAYSIGHT_DB_PATH;
+    else process.env.PAYSIGHT_DB_PATH = prevDb;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  await t.test("splits 60-day and 90-day windows into <= 30 day PayPal chunks", () => {
+    const end = new Date("2026-10-20T00:00:00Z");
+    const start90 = new Date(end.getTime() - 90 * 86400000);
+    const chunks90 = buildDateChunks(start90, end, 30);
+    assert.equal(chunks90.length, 3, "90 days must split into 3 chunks of <=30 days");
+    for (const c of chunks90) {
+      const spanDays = (c.endDate.getTime() - c.startDate.getTime()) / 86400000;
+      assert.ok(spanDays <= 31 && spanDays > 0);
+    }
+
+    const start60 = new Date(end.getTime() - 60 * 86400000);
+    const chunks60 = buildDateChunks(start60, end, 30);
+    assert.equal(chunks60.length, 2, "60 days must split into 2 chunks");
+  });
+
+  await t.test("separates currencies strictly without mixing EUR into USD KPIs", async () => {
+    const nowIso = new Date().toISOString();
     const txUSD: Transaction = {
       id: "TEST-TX-USD-1",
-      date: new Date().toISOString(),
-      amount: 100.00,
-      fee: 3.20,
-      net: 96.80,
+      date: nowIso,
+      amount: 100.0,
+      fee: 3.2,
+      net: 96.8,
       currency: "USD",
       status: "COMPLETED",
       customerName: "US Customer",
@@ -24,10 +58,10 @@ test("Analytics: authoritative server-side calculation and currency separation",
 
     const txEUR: Transaction = {
       id: "TEST-TX-EUR-1",
-      date: new Date().toISOString(),
-      amount: 80.00,
-      fee: 2.60,
-      net: 77.40,
+      date: nowIso,
+      amount: 500.0,
+      fee: 15.0,
+      net: 485.0,
       currency: "EUR",
       status: "COMPLETED",
       customerName: "EU Customer",
@@ -40,24 +74,59 @@ test("Analytics: authoritative server-side calculation and currency separation",
     saveTransaction(txUSD);
     saveTransaction(txEUR);
 
-    const kpis = await getMerchantKPIs();
-    assert.ok(kpis.currencyTotals, "currencyTotals must be present");
-    assert.ok(kpis.currencyTotals["USD"], "USD currency breakdown must exist");
-    assert.ok(kpis.currencyTotals["EUR"], "EUR currency breakdown must exist");
+    const kpisBeforeEurCheck = await getMerchantKPIs(30, "USD");
+    const kpisEur = await getMerchantKPIs(30, "EUR");
 
-    assert.equal(typeof kpis.currencyTotals["USD"].gross, "number");
-    assert.equal(typeof kpis.currencyTotals["EUR"].gross, "number");
-    // Verify EUR and USD are separated in currency totals
-    assert.ok(kpis.currencyTotals["EUR"].gross >= 80.00);
+    assert.equal(kpisBeforeEurCheck.currency, "USD");
+    assert.equal(kpisEur.currency, "EUR");
+    assert.equal(kpisEur.grossVolume30d, 500.0, "EUR KPI must contain only EUR");
+    assert.equal(kpisEur.totalFees30d, 15.0);
+    assert.equal(kpisEur.netVolume30d, 485.0);
+
+    // Ensure 500 EUR did not leak into USD totals
+    assert.ok(
+      kpisBeforeEurCheck.currencyTotals["USD"].gross === kpisBeforeEurCheck.grossVolume30d,
+      "USD headline grossVolume30d must match USD breakdown exactly"
+    );
+    assert.equal(kpisBeforeEurCheck.currencyTotals["EUR"].gross, 500.0);
   });
 
-  await t.test("refund and fee accounting is correct and distinct from gross", async () => {
+  await t.test("refund and fee accounting is distinct and computes period-over-period delta", async () => {
+    const now = Date.now();
+    const currentTx: Transaction = {
+      id: "CURR-SALE-1",
+      date: new Date(now - 2 * 86400000).toISOString(),
+      amount: 200.0,
+      fee: 6.1,
+      net: 193.9,
+      currency: "USD",
+      status: "COMPLETED",
+      customerName: "Current Buyer",
+      customerEmail: "curr@example.com",
+      productName: "Plan",
+      paymentMethod: "paypal",
+      source: "demo_sample",
+    };
+    const prevTx: Transaction = {
+      id: "PREV-SALE-1",
+      date: new Date(now - 40 * 86400000).toISOString(),
+      amount: 100.0,
+      fee: 3.2,
+      net: 96.8,
+      currency: "USD",
+      status: "COMPLETED",
+      customerName: "Prior Buyer",
+      customerEmail: "prev@example.com",
+      productName: "Plan",
+      paymentMethod: "paypal",
+      source: "demo_sample",
+    };
     const refundTx: Transaction = {
       id: "TEST-REF-1",
-      date: new Date().toISOString(),
-      amount: 50.00,
+      date: new Date(now - 1 * 86400000).toISOString(),
+      amount: 50.0,
       fee: 0,
-      net: -50.00,
+      net: -50.0,
       currency: "USD",
       status: "REFUNDED",
       customerName: "Refund Customer",
@@ -67,32 +136,46 @@ test("Analytics: authoritative server-side calculation and currency separation",
       source: "demo_sample",
     };
 
-    saveTransaction(refundTx);
+    const kpis = computeMerchantKPIs({
+      transactions: [currentTx, prevTx, refundTx],
+      days: 30,
+      currency: "USD",
+      source: "demo_sample",
+      disputeCount: 1,
+      nowMs: now,
+    });
 
-    const kpis = await getMerchantKPIs();
-    assert.ok(kpis.refundCount30d >= 1, "Must record at least 1 refund");
-    assert.ok(kpis.refundAmount30d >= 50.00, "Refund amount must include the 50.00 refund");
-    assert.ok(kpis.grossVolume30d > 0, "Gross volume must remain positive");
-    assert.ok(kpis.totalFees30d >= 0, "Total fees must be tracked distinctly");
-    assert.equal(
-      parseFloat((kpis.grossVolume30d - kpis.totalFees30d).toFixed(2)),
-      parseFloat(kpis.netVolume30d.toFixed(2)),
-      "Net volume must equal gross volume minus total fees"
-    );
+    assert.equal(kpis.grossVolume30d, 200.0);
+    assert.equal(kpis.totalFees30d, 6.1);
+    assert.equal(kpis.netVolume30d, 193.9);
+    assert.equal(kpis.refundCount30d, 1);
+    assert.equal(kpis.refundAmount30d, 50.0);
+    assert.equal(kpis.hasPreviousPeriodData, true);
+    assert.equal(kpis.totalRevenue30dChange, 100.0); // 200 vs 100 = +100%
+    assert.equal(kpis.disputeRate, 100.0); // 1 dispute / 1 completed order
   });
 
-  await t.test("AOV has safe non-zero denominator guard", async () => {
-    const kpis = await getMerchantKPIs();
-    assert.ok(!isNaN(kpis.averageOrderValue), "AOV must never be NaN");
-    assert.ok(isFinite(kpis.averageOrderValue), "AOV must be finite");
+  await t.test("AOV has safe zero-denominator guard and series isolates currency", async () => {
+    const emptyKpis = computeMerchantKPIs({
+      transactions: [],
+      days: 30,
+      currency: "USD",
+      source: "demo_sample",
+    });
+    assert.equal(emptyKpis.averageOrderValue, 0);
+    assert.equal(emptyKpis.disputeRate, 0);
+
+    const seriesUsd = await getRevenueTimeSeries(7, "USD");
+    assert.equal(seriesUsd.length, 7);
+    assert.ok(seriesUsd.every((pt) => pt.currency === "USD"));
   });
 
-  await t.test("API failures or missing live credentials do not invent dispute data", async () => {
+  await t.test("missing live credentials do not fabricate dispute data", async () => {
     const disputeResult = await listDisputes();
     assert.equal(typeof disputeResult.isLive, "boolean");
-    assert.ok(disputeResult.statusMessage.length > 0, "Status message must explain retrieval state");
+    assert.ok(disputeResult.statusMessage.length > 0);
     if (!disputeResult.isLive) {
-      assert.equal(disputeResult.disputes.length, 0, "Must not invent fake disputes when unconfigured");
+      assert.equal(disputeResult.disputes.length, 0);
     }
   });
 });

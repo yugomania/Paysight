@@ -1,185 +1,156 @@
-# ⚡ PaySight — AI-Powered PayPal Analytics & Market Intelligence
+# PaySight — AI-Powered PayPal Merchant Analytics, Budgeting & Market Intelligence
 
-PaySight is an AI-powered merchant analytics and market intelligence dashboard built for PayPal business users. It bridges **PayPal payments**, **real-time market pricing via Channel3**, and **grounded conversational AI powered by Google Gemini 2.0 Flash**.
-
----
-
-## 🎯 The Complete Merchant Journey
-
-PaySight demonstrates an end-to-end operational journey for a digital merchant:
-
-1. **Understand Payments & Analytics**: Inspect settlement velocity, gross volume, net volume, fees, refunds, and AOV using server-calculated figures with currency-aware totals.
-2. **Compare Market Pricing**: Search or select a catalog item to cross-reference multi-retailer listings (Amazon, Best Buy, Walmart, B&H) using Channel3 to evaluate whether items are competitive or underpriced.
-3. **Prepare an Invoice**: Formulate an invoice proposal via the UI or conversational Copilot, validating recipient email, line items, and quantities before any Sandbox submission.
-4. **Exact Preview & Confirmation**: Review an exact preview of the proposed draft and explicitly authorize either a Sandbox Draft creation or immediate dispatch.
-5. **Create in PayPal Sandbox**: Execute creation against PayPal Sandbox Invoicing API v2, receiving authoritative invoice identifiers and actual statuses.
-6. **Live Terminal & Reconciliation**: Execute server-side captured orders with deduplication, webhook event tracking, and durable local persistence.
+**PaySight** (`paysight` `v0.1.0` / UI `v2.0`) is an open-source merchant operations command center built for PayPal business users with Next.js 16, React 19, TypeScript, AG Grid, Recharts, PayPal Sandbox APIs, Channel3 Market Intelligence, and Google Gemini.
 
 ---
 
-## 🏛️ System Architecture
+## Problem Statement & Target Audience
 
-```mermaid
-flowchart TD
-    subgraph Client["Frontend (Next.js 16 + React 19)"]
-        UI["PaySight Dashboard"]
-        KPI["Server-Calculated KPI Cards"]
-        GRID["AG Grid Transaction Explorer (v36.2)"]
-        CHART["Recharts Settlement Velocity Chart"]
-        RADAR["Channel3 Competitor Price Radar"]
-        TERM["Server-Validated Checkout Terminal"]
-        COPILOT["PaySight AI Copilot (Vercel AI SDK)"]
-    end
+Digital and e-commerce merchants running on PayPal frequently juggle separate dashboards to reconcile gross vs. net settlements after fees and refunds, compare product pricing across competing retailers, manually track operating expenses against monthly revenue targets, and create/send customer invoices safely.
 
-    subgraph Server["Server-Side Services (Node.js)"]
-        API_TXN["/api/transactions (Deduplication & KPIs)"]
-        API_ORD["/api/orders/create & /capture (Server Validation)"]
-        API_INV["/api/invoices (Validation & Idempotency)"]
-        API_WH["/api/webhooks/paypal (Idempotent Event Log)"]
-        API_C3["/api/pricing (Comparable Benchmarks)"]
-        ORCH["AI Orchestrator (Grounded Tool Calling)"]
-        STORE[(".data/paysight-db.json Durable Store")]
-    end
-
-    subgraph External["External Services"]
-        PP_SANDBOX["PayPal Sandbox API (api-m.sandbox.paypal.com)"]
-        C3_API["Channel3 API (api.trychannel3.com)"]
-        GEMINI["Google Gemini 2.0 Flash API"]
-    end
-
-    UI --> KPI & GRID & CHART & RADAR & TERM & COPILOT
-    API_TXN & API_ORD & API_INV & API_WH <--> STORE
-    API_TXN --> PP_SANDBOX
-    API_ORD --> PP_SANDBOX
-    API_INV --> PP_SANDBOX
-    API_C3 --> C3_API
-    COPILOT --> ORCH --> GEMINI
-    ORCH --> API_TXN & API_C3 & API_INV
-```
+PaySight serves **PayPal merchants, digital sellers, and finance operators** who want one transparent workspace where financial calculations run deterministically on the server and an AI copilot explains verified figures without inventing totals or triggering unconfirmed financial actions.
 
 ---
 
-## 🛠️ Technology Stack & Dependencies
+## Product Overview & Core Features
 
-- **Framework**: Next.js 16.4.2 (App Router, Turbopack) & React 19.3.0
-- **Language**: TypeScript 5
-- **Styling**: Tailwind CSS 4 with custom design tokens (pure white `#FFFFFF`, black sidebar `#111111`, monochrome logo, and restrained `#C2410C` orange accents)
-- **Data Grids**: AG Grid Community 36.2.0 (`ag-grid-community`, `ag-grid-react`, Light Quartz theme)
-- **Charts**: Recharts 3.10.1 (SVG AreaChart with linear gradient)
-- **AI & LLM**: Google Gemini 2.0 Flash via `@ai-sdk/google` 4.0.99 and Vercel AI SDK (`ai` 4.3.19)
-- **PayPal Server SDK**: `@paypal/paypal-server-sdk` 2.5.0 (TransactionSearchController, OrdersController)
-- **PayPal Client SDK**: `@paypal/react-paypal-js` 10.6.0 (Official checkout button controls)
-- **Market Intelligence**: Channel3 REST API v1 (`https://api.trychannel3.com/v1`)
-- **Persistence**: File-backed atomic local database (`.data/paysight-db.json`) ensuring durability across reloads and zero lost transactions
-
----
-
-## 🤝 Verified Sponsor Integrations
-
-| Technology / Tool | Implementation Scope | Implementation Files |
-|---|---|---|
-| **PayPal Sandbox** | Server-side Orders v2 creation/capture, Invoicing v2 draft creation/sending, Transaction Search integration, and webhook event idempotency. | `src/lib/paypal/client.ts`, `src/lib/paypal/api.ts`, `src/app/api/orders/` |
-| **AG Grid** | Renders transaction matrix and multi-retailer competitor price radar using the Light Quartz theme, column resizing, custom cell renderers, and CSV export. | `src/components/dashboard/TransactionGrid.tsx`, `src/components/dashboard/CompetitorPricingGrid.tsx` |
-| **Channel3** | Live multi-retailer pricing radar with brand extraction, exact vs approximate match segregation, benchmark floor/ceiling/average calculation, and retailer links. | `src/lib/channel3/client.ts`, `src/app/api/pricing/route.ts` |
-| **APIMatic** | APIMatic schema context definitions for PayPal Invoicing and Transaction Search parameters embedded into the assistant's structured system prompt to guide tool argument generation. | `src/lib/ai/orchestrator.ts` |
-| **Render** | Blueprint configuration (`render.yaml`) defining web service build commands (`npm run build`) and production start commands (`npm run start`). | `render.yaml` |
-
-> [!NOTE]
-> **Developer Dashboard Note**: To use live Sandbox Transaction Search, verify that the **Transaction Search** feature is enabled in your PayPal Developer Dashboard app settings (`developer.paypal.com/dashboard/applications/sandbox`).
+1. **PayPal Analytics & Settlement KPIs**:
+   - Server-calculated 30-day **Net Volume**, **Gross Volume**, **PayPal Fees**, **Settled Orders**, **Average Order Value (AOV)**, **Refunds**, and **Dispute Rate** with strict currency separation (`USD`, `EUR`, etc. are never summed together).
+   - Multi-currency summary strip for unconverted secondary currencies.
+   - `7 Days` / `30 Days` / `90 Days` **Settlement Velocity** chart (`Recharts`) with computed half-over-half window trend badges.
+   - **Needs Attention** banner surfacing open PayPal disputes and past-due unpaid invoices.
+2. **Transaction Explorer & Reconciliation**:
+   - Chunked (`<= 30`-day windows) and paginated PayPal Transaction Search integration (`src/lib/paypal/api.ts`) with deduplication.
+   - Searchable, filterable (`All`, `Completed`, `Pending`, `Exceptions`), sortable AG Grid table with row-click Settlement Detail modal and CSV export.
+3. **Two-Step Confirmed PayPal Invoicing (v2)**:
+   - Interactive composer supporting multi-line items, currency selection, SHA-256 `confirmationToken` binding between preview and submission, in-flight duplicate locking, `DRAFT` creation by default, and post-creation **Send**, **Cancel**, and **Inspect Detail** actions.
+4. **Merchant Budget Intelligence**:
+   - Monthly sales targets and operating expense budgets per currency (`src/lib/budget/service.ts`, `/api/budget`).
+   - Separates **PayPal Gross Sales**, **PayPal Processing Fees**, **Net PayPal Proceeds**, **Refunds**, and **Merchant-Recorded Operating Expenses** across 7 categories (`inventory`, `marketing`, `software`, `shipping`, `operations`, `taxes`, `other`), computing **Estimated Operating Cash Flow**, month-over-month comparisons, and budget alerts.
+5. **Channel3 Competitor Price Radar**:
+   - Multi-retailer price search (`https://api.trychannel3.com/v1`) with 15-minute bounded caching, exact vs. approximate match separation, floor/average/ceiling benchmarks, price position difference, and explicit `Channel3 Live` vs. `Demo Catalog Fallback` source badges. Live failures never fabricate prices.
+6. **Sandbox Checkout Terminal**:
+   - Server-authoritative 4-SKU catalog (`demo_10` `$10`, `sub_pro` `$49`, `intel_add` `$29`, `exp_pack` `$19`).
+   - Uses official `@paypal/react-paypal-js` popup approval + server capture verification in **PayPal Sandbox Mode**, and provides an explicit local simulation button in **Demo Mode**.
+7. **Fail-Closed PayPal Webhook Receiver (`/api/webhooks/paypal`)**:
+   - Enforces PayPal transmission headers + `PAYPAL_WEBHOOK_ID` + HTTPS PayPal certificate URL + PayPal REST signature verification before accepting events (`PAYMENT.CAPTURE.*`, `INVOICING.INVOICE.*`), deduplicates by event ID, and preserves existing invoice line items across status webhooks.
+8. **Grounded AI Merchant Copilot (`Cmd+J` / `Ask PaySight`)**:
+   - Google Gemini (`@ai-sdk/google` + Vercel AI SDK `ai@4.3.19`) wired to 9 server-side read/budget/pricing/invoicing tools with prompt-injection sanitization, tool invocation status pills, safe JSX Markdown rendering, and deterministic offline Markdown fallback tools.
 
 ---
 
-## 🚀 Getting Started
+## Architecture & Technology Stack
+
+- **Framework**: Next.js `16.4.2` (App Router, Turbopack), React `19.3.0`, TypeScript `5` (`strict: true`)
+- **UI & Visualization**: Tailwind CSS `4`, AG Grid Community `36.2.0` (`theme="legacy"`), Recharts `3.10.1`, Lucide React
+- **PayPal Integration**: `@paypal/paypal-server-sdk` `2.5.0`, `@paypal/react-paypal-js` `10.6.0`, plus PayPal REST v2/v1 (`fetch` + cached OAuth2)
+- **AI & Validation**: Vercel AI SDK `ai` `4.3.19`, `@ai-sdk/google` `1.2.22`, `zod` `3.25.76`
+- **Market Intelligence**: Channel3 REST API v1 (`api.trychannel3.com`)
+- **Persistence**: File-locked atomic JSON persistence (`.data/paysight-db.json` via `src/lib/db/index.ts`, abstracted behind `StoreRepository`)
+
+See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for full Mermaid architecture, sequence, and workflow diagrams.
+
+---
+
+## Demo Mode vs. PayPal Sandbox Mode
+
+| Mode | Trigger Condition | Transactions & Invoices | Checkout Terminal | Channel3 & Gemini |
+|---|---|---|---|---|
+| **Demo Mode** | `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` omitted or placeholders | Deterministic seeded local records in `.data/paysight-db.json` (`source: "demo_sample"`) | Simulated local capture button (`CAP-SIM-*`, no PayPal popup) | Structured demo catalog (`isSimulated: true`) & local deterministic tool fallback if keys omitted |
+| **PayPal Sandbox Mode** | Valid Sandbox `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | Live `api-m.sandbox.paypal.com` Search, Invoicing v2, Disputes v1 (`source: "paypal_sandbox"`), isolated from demo seeds | Real PayPal JS SDK buyer login & server-verified order capture | Uses live `CHANNEL3_API_KEY` and `GOOGLE_GENERATIVE_AI_API_KEY` when provided |
+
+---
+
+## Setup & Local Execution
 
 ### 1. Prerequisites
-- Node.js 18+ (verified on Node 20 / Node 24)
-- npm 9+
-- A [PayPal Developer Sandbox Account](https://developer.paypal.com) (optional for Demo Mode)
-- A [Google AI Studio API Key](https://aistudio.google.com/app/apikey) (for Gemini Copilot)
+
+- Node.js `20+` (verified on Node `v24.21.0`) and `npm`
+- Optional for Sandbox Mode: [PayPal Developer Sandbox App](https://developer.paypal.com/dashboard/applications/sandbox) with **Transaction Search**, **Invoicing**, and **Customer Disputes** enabled
+- Optional for live AI & Pricing: [Google AI Studio API Key](https://aistudio.google.com/app/apikey) and [Channel3 API Key](https://trychannel3.com/)
 
 ### 2. Installation
+
 ```bash
-git clone https://github.com/yugomania/ai-interface.git
-cd ai-interface
-npm install
+git clone https://github.com/yugomania/Paysight.git
+cd Paysight
+npm ci
 ```
 
-### 3. Environment Modes
+### 3. Configure Environment
 
-#### Option A: Zero-Configuration Demo Mode (Default)
-PaySight runs immediately out-of-the-box without requiring live PayPal credentials. It uses persistent local storage (`.data/paysight-db.json`) seeded with deterministic merchant records:
 ```bash
 cp .env.example .env.local
-npm run dev
 ```
 
-#### Option B: Live PayPal Sandbox Connection
-Fill your credentials in `.env.local`:
-```env
-PAYPAL_CLIENT_ID=your_sandbox_client_id
-PAYPAL_CLIENT_SECRET=your_sandbox_client_secret
-PAYPAL_ENVIRONMENT=sandbox
-NEXT_PUBLIC_PAYPAL_CLIENT_ID=your_sandbox_client_id
-GOOGLE_GENERATIVE_AI_API_KEY=your_gemini_api_key
-CHANNEL3_API_KEY=your_channel3_api_key
-```
+| Variable | Mode / Requirement | Purpose |
+|---|---|---|
+| `PAYPAL_CLIENT_ID` | Required for Sandbox | PayPal REST/SDK client ID |
+| `PAYPAL_CLIENT_SECRET` | Required for Sandbox | PayPal REST/SDK client secret |
+| `PAYPAL_ENVIRONMENT` | Default `sandbox` | `"sandbox"` or `"live"` |
+| `NEXT_PUBLIC_PAYPAL_CLIENT_ID` | Required for live Checkout UI | Browser PayPal JS SDK client ID |
+| `PAYPAL_WEBHOOK_ID` | Required for `/api/webhooks/paypal` | Webhook ID configured in PayPal Developer Dashboard |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | Optional | Enables live Google Gemini streaming (`streamText`) |
+| `GEMINI_MODEL` | Optional (default `gemini-2.0-flash`) | Google Gemini model identifier |
+| `CHANNEL3_API_KEY` | Optional | Enables live Channel3 product comparisons |
+| `PAYSIGHT_DB_PATH` | Optional | Overrides `.data/paysight-db.json` path (used automatically by tests) |
 
-### 4. Running the Application
+### 4. Run Locally
+
 ```bash
 npm run dev
 ```
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+Open [http://localhost:3000](http://localhost:3000).
+
+> **Note on Visual Assets**: No static screenshot PNGs are committed inside the repository yet; open `/` locally or follow [`HACKATHON_DEMO_SCRIPT.md`](./HACKATHON_DEMO_SCRIPT.md) to walk through every live tab.
 
 ---
 
-## 🎬 3-Minute Demo Script (For Judges & Evaluators)
+## Testing & Quality Gates
 
-**Time: 2 minutes 45 seconds**
-
-- **0:00 - 0:30 | The Merchant Problem & Overview**:
-  - Open `http://localhost:3000`. Point out the clean white interface, solid black sidebar with monochrome "P" logo, and KPI cards showing net volume and settled orders.
-  - Explain that merchants struggle to reconcile payments, compare competitor pricing, and generate invoices quickly without logging into multiple tools.
-
-- **0:30 - 1:15 | Trustworthy Analytics & Grounded AI**:
-  - Click on the **PaySight Copilot** prompt: *"Summarise my payments for the last 30 days."*
-  - Watch the assistant call the server-side `summarizePayments` tool.
-  - Notice the response explicitly identifies the reporting window (30 days), currency (USD), data source, gross volume, net volume, and fees—matching the exact numbers displayed in the KPI cards and Recharts velocity curve.
-
-- **1:15 - 1:55 | Price Comparison (Channel3)**:
-  - Navigate to the **Price comparison** tab.
-  - View the live comparison grid. In the search bar at the top, enter a custom product: `Sony WH-1000XM5` with your price `$149.99`.
-  - Click **Compare Item**. Watch the Channel3 client retrieve multi-retailer listings (Amazon, Best Buy, Walmart, B&H) and calculate the market floor ($149.00), ceiling ($179.95), and benchmark average ($162.98).
-  - Click on the row to view the drilldown modal showing exact retailer source links and match classifications.
-
-- **1:55 - 2:30 | Two-Step Invoicing Workflow**:
-  - Click **+ New Invoice** in the top bar.
-  - Step 1: Confirm customer `Acme Global Partners`, `finance@acmepartners.com`, and amount `$1,250.00`. Click **Review Preview**.
-  - Step 2: Review the exact invoice preview with cryptographic confirmation token binding. Choose **Create as DRAFT**.
-  - Step 3: Click **Confirm & Create Invoice**. The modal executes creation and returns the actual invoice identifier (`INV2-SANDBOX-...`) with status `DRAFT`.
-  - Switch to the **Invoices** tab to see the newly created invoice immediately appear in the active invoice ledger.
-
-- **2:30 - 2:45 | Sandbox Checkout & Reconciliation**:
-  - Switch to the **Sandbox checkout** view (under Demo Tools).
-  - Click **Execute Sandbox Checkout** on the Pro Merchant Plan ($49.00).
-  - The payment is captured server-side with amount verification and added to the transactions ledger without double counting.
-
----
-
-## 🧪 Automated Testing
-
-Run the test suite covering analytics calculations, date chunking, invoice validation, idempotency, and webhook deduplication:
 ```bash
-npm test
-```
-
-Run static analysis and production build:
-```bash
-npm run lint
-npm run build
+npm test            # Runs all 7 node:test suites cleanly in isolated temp DBs
+npm run lint        # ESLint 9 checks
+npx tsc --noEmit    # Strict TypeScript check
+npm run build       # Production Next.js build (requires internet access for Google Fonts)
 ```
 
 ---
 
-## 📜 License
+## Deployment
 
-Licensed under the [MIT License](LICENSE).
+A Render web-service blueprint is defined in [`render.yaml`](./render.yaml):
+
+- **Build command**: `npm ci && npm run build`
+- **Start command**: `npm start`
+- **Important Persistence Caveat**: On Render's Free plan, the container filesystem is ephemeral; `.data/paysight-db.json` resets across restarts/deploys unless you attach persistent storage or implement a database adapter behind `StoreRepository` (`src/lib/db/index.ts`).
+
+---
+
+## Security Notes & Known Limitations
+
+- **Single-Workspace Prototype (No User Login)**: PaySight currently does not include end-user login/session authentication or multi-tenant isolation. Do not expose a deployment holding real customer/merchant data publicly without adding authentication and rate limiting first. See [`SECURITY.md`](./SECURITY.md).
+- **PayPal Sandbox Permissions**: Live Transaction Search and Customer Disputes require explicit feature toggles in your PayPal Sandbox Developer App; if disabled, PaySight discloses the limitation honestly via warning banners.
+- **Channel3 Unconfigured Fallback**: When `CHANNEL3_API_KEY` is unset, comparisons return sample/demo reference listings clearly tagged `Demo` (`isSimulated: true`). When `CHANNEL3_API_KEY` is configured and fails or returns empty, PaySight returns `0` listings rather than inventing competitor prices.
+- **Standalone Payment Links**: Synthetic PayPal payment links were removed; use PayPal Invoicing v2 (`paymentUrl` generated once sent in Sandbox).
+
+---
+
+## Troubleshooting
+
+- **Offline `npm run build` fails on `Geist` fonts**: `next/font/google` fetches `Geist` and `Geist_Mono` from `fonts.googleapis.com` at build time; ensure outbound HTTPS access or run builds in a connected environment.
+- **PayPal Sandbox Transaction Search notice**: Confirm **Transaction Search** is checked under App Features in `developer.paypal.com/dashboard/applications/sandbox`.
+- **PayPal Checkout popup blocked**: Allow browser popups for `localhost:3000`, and log in with a PayPal Sandbox **Personal (Buyer)** account rather than your Business merchant account.
+
+---
+
+## Demo Instructions
+
+Follow [`HACKATHON_DEMO_SCRIPT.md`](./HACKATHON_DEMO_SCRIPT.md) for a reproducible <3-minute walkthrough, and [`HACKATHON_TESTING_GUIDE.md`](./HACKATHON_TESTING_GUIDE.md) for verification commands.
+
+---
+
+## License
+
+Licensed under the [MIT License](./LICENSE).

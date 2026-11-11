@@ -1,59 +1,96 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { searchProducts, getPricingComparison } from "../src/lib/channel3/client";
+import {
+  clearPricingCache,
+  getPricingComparison,
+  searchProducts,
+} from "../src/lib/channel3/client";
 
-test("Channel3 Market Comparisons: exact vs approximate matching and defined benchmarks", async (t) => {
-  await t.test("searches products and returns listings with required merchant attributes", async () => {
-    const products = await searchProducts("Anker 737 Power Bank");
-    assert.ok(products.length > 0, "Should return product listings");
+test("Channel3 Market Comparisons: live transparency, matching, and benchmarks", async (t) => {
+  t.beforeEach(() => {
+    clearPricingCache();
+  });
 
-    for (const p of products) {
-      assert.ok(p.productName, "Listing must have product title");
-      assert.ok(p.retailer, "Listing must identify retailer");
-      assert.ok(typeof p.price === "number" && p.price > 0, "Listing must have numeric price > 0");
-      assert.ok(p.currency, "Listing must specify currency");
-      assert.ok(p.url, "Listing must include source link");
-      assert.ok(p.retrievalTime, "Listing must record retrieval timestamp");
-      assert.ok(typeof p.isExactMatch === "boolean", "Listing must flag exact vs approximate match");
+  await t.test("demo fallback mode marks simulated results transparently", async () => {
+    const prevKey = process.env.CHANNEL3_API_KEY;
+    delete process.env.CHANNEL3_API_KEY;
+    try {
+      const products = await searchProducts("Anker 737 Power Bank");
+      assert.ok(products.length > 0);
+      for (const p of products) {
+        assert.ok(p.productName);
+        assert.ok(p.retailer);
+        assert.ok(p.price > 0);
+        assert.ok(p.url.startsWith("http"));
+        assert.ok(p.matchConfidence === "exact" || p.matchConfidence === "approximate");
+      }
+
+      const comp = await getPricingComparison("Sony WH-1000XM5 Wireless Headphones", 139.99);
+      assert.equal(comp.isSimulated, true);
+      assert.equal(comp.source, "structured_fallback");
+      assert.equal(
+        (comp.exactMatchesCount ?? 0) + (comp.approximateMatchesCount ?? 0),
+        comp.competitorCount
+      );
+      assert.ok(comp.marketMinPrice > 0 && comp.marketMaxPrice >= comp.marketMinPrice);
+      assert.ok(comp.disclaimer?.includes("Demo"));
+    } finally {
+      if (prevKey === undefined) delete process.env.CHANNEL3_API_KEY;
+      else process.env.CHANNEL3_API_KEY = prevKey;
     }
   });
 
-  await t.test("separates exact matches from approximate alternatives", async () => {
-    const comparison = await getPricingComparison("Sony WH-1000XM5 Wireless Headphones", 349.99);
+  await t.test("live Channel3 mode never fabricates prices when upstream returns empty or fails", async () => {
+    const prevKey = process.env.CHANNEL3_API_KEY;
+    const origFetch = globalThis.fetch;
+    process.env.CHANNEL3_API_KEY = "c3_live_test_key_123456";
 
-    assert.equal(comparison.yourProductName, "Sony WH-1000XM5 Wireless Headphones");
-    assert.equal(comparison.yourPrice, 349.99);
-    assert.ok(comparison.competitorCount > 0, "Must have competitor listings");
-    assert.ok(typeof comparison.exactMatchesCount === "number", "Exact matches count must be a number");
-    assert.ok(typeof comparison.approximateMatchesCount === "number", "Approximate matches count must be a number");
-    assert.equal(
-      comparison.exactMatchesCount + comparison.approximateMatchesCount,
-      comparison.competitorCount,
-      "Sum of exact and approximate counts must equal total competitor count"
-    );
-  });
+    try {
+      // Case 1: Live returns matching items
+      globalThis.fetch = async () =>
+        new Response(
+          JSON.stringify({
+            products: [
+              {
+                name: "Logitech MX Master 3S Wireless Mouse",
+                retailer: "Amazon",
+                price: 94.99,
+                currency: "USD",
+                url: "https://amazon.com/dp/mx3s",
+                in_stock: true,
+              },
+              {
+                name: "Logitech MX Master 3S Mouse Graphite",
+                retailer: "Best Buy",
+                price: 99.99,
+                currency: "USD",
+                url: "https://bestbuy.com/mx3s",
+                in_stock: true,
+              },
+            ],
+          }),
+          { status: 200 }
+        );
 
-  await t.test("calculates min, max, avg only from the defined comparable set with explicit disclaimer", async () => {
-    const comparison = await getPricingComparison("Logitech MX Master 3S", 99.99);
+      const liveComp = await getPricingComparison("Logitech MX Master 3S", 89.99);
+      assert.equal(liveComp.isSimulated, false);
+      assert.equal(liveComp.source, "channel3_live");
+      assert.equal(liveComp.competitorCount, 2);
+      assert.equal(liveComp.marketAvgPrice, 97.49);
 
-    assert.ok(comparison.marketMinPrice > 0, "Min price must be positive");
-    assert.ok(comparison.marketMaxPrice >= comparison.marketMinPrice, "Max price must be >= min price");
-    assert.ok(
-      comparison.marketAvgPrice >= comparison.marketMinPrice && comparison.marketAvgPrice <= comparison.marketMaxPrice,
-      "Avg price must be between min and max price"
-    );
-
-    assert.ok(comparison.disclaimer, "Must contain comparison limitations disclaimer");
-    assert.ok(
-      comparison.disclaimer.includes("retrieved listings") || comparison.disclaimer.includes("Not an exhaustive"),
-      "Disclaimer must clarify that results are among retrieved comparable listings and not a full market census"
-    );
-  });
-
-  await t.test("supports arbitrary custom products without crashing", async () => {
-    const customComparison = await getPricingComparison("Custom Ergonomic Mechanical Keyboard", 149.00);
-    assert.equal(customComparison.yourPrice, 149.00);
-    assert.ok(customComparison.competitors.length > 0);
-    assert.ok(customComparison.marketAvgPrice > 0);
+      // Case 2: Live API fails (HTTP 502) -> must NOT fabricate mock catalog entries
+      clearPricingCache();
+      globalThis.fetch = async () => new Response("Bad Gateway", { status: 502 });
+      const errComp = await getPricingComparison("Logitech MX Master 3S", 89.99);
+      assert.equal(errComp.isSimulated, false);
+      assert.equal(errComp.source, "channel3_live");
+      assert.equal(errComp.competitorCount, 0);
+      assert.equal(errComp.pricePosition, "unknown");
+      assert.ok(errComp.disclaimer?.includes("HTTP 502"));
+    } finally {
+      globalThis.fetch = origFetch;
+      if (prevKey === undefined) delete process.env.CHANNEL3_API_KEY;
+      else process.env.CHANNEL3_API_KEY = prevKey;
+    }
   });
 });
