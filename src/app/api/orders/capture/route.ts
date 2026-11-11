@@ -1,20 +1,29 @@
 import { NextRequest } from "next/server";
 import { captureServerSideOrder } from "@/lib/paypal/api";
+import { resolveSandboxProduct } from "@/lib/paypal/catalog";
 
-// In-process idempotency set — guards against duplicate submissions
+// In-process idempotency set — guards against concurrent duplicate submissions
 // within the same server process lifetime.
 const captureInFlight = new Set<string>();
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { orderId, productId } = body;
+    const body = await req.json().catch(() => ({}));
+    const orderId = typeof body?.orderId === "string" ? body.orderId.trim() : "";
+    const productId =
+      typeof body?.productId === "string" ? body.productId.trim() : undefined;
 
-    if (!orderId || typeof orderId !== "string") {
+    if (!orderId) {
       return Response.json({ error: "orderId is required" }, { status: 400 });
     }
 
-    // Prevent concurrent duplicate captures of the same order.
+    if (productId && !resolveSandboxProduct(productId)) {
+      return Response.json(
+        { error: `Unknown productId "${productId}"` },
+        { status: 400 }
+      );
+    }
+
     if (captureInFlight.has(orderId)) {
       return Response.json(
         { error: "Capture already in progress for this order. Please wait." },
@@ -24,7 +33,7 @@ export async function POST(req: NextRequest) {
     captureInFlight.add(orderId);
 
     try {
-      const result = await captureServerSideOrder(orderId, productId as string | undefined);
+      const result = await captureServerSideOrder(orderId, productId);
 
       if (!result.success) {
         return Response.json({ error: result.error ?? "Capture failed" }, { status: 400 });

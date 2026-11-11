@@ -1,69 +1,45 @@
 import { NextRequest } from "next/server";
 import { getOrdersController, hasValidPayPalConfig } from "@/lib/paypal/client";
 import {
+  SANDBOX_PRODUCTS,
+  resolveSandboxProduct,
+  extractPayPalSdkError,
+} from "@/lib/paypal/catalog";
+import {
   CheckoutPaymentIntent,
   PaypalWalletContextShippingPreference,
   PaypalExperienceUserAction,
 } from "@paypal/paypal-server-sdk";
 
-// ─── Authoritative Server-Side Product Catalog ───────────────────────────────
-// Amounts and currencies are determined here, never trusted from the browser.
+export { SANDBOX_PRODUCTS };
 
-export const SANDBOX_PRODUCTS: Record<
-  string,
-  { name: string; amount: string; currency: string; description: string }
-> = {
-  demo_10: {
-    name: "PaySight Demo Product",
-    amount: "10.00",
-    currency: "USD",
-    description: "[SANDBOX] PaySight $10 Demo — test payment, no real money",
-  },
-  sub_pro: {
-    name: "PaySight Pro Merchant Plan",
-    amount: "49.00",
-    currency: "USD",
-    description: "[SANDBOX] Monthly AI analytics & real-time monitoring",
-  },
-  intel_add: {
-    name: "Channel3 Price Scanner Add-on",
-    amount: "29.00",
-    currency: "USD",
-    description: "[SANDBOX] Competitor tracking for up to 10,000 SKUs",
-  },
-  exp_pack: {
-    name: "Agentic Invoicing Expansion",
-    amount: "19.00",
-    currency: "USD",
-    description: "[SANDBOX] Automated invoice creation & dispute shields",
-  },
-};
+export async function GET() {
+  return Response.json({
+    products: Object.values(SANDBOX_PRODUCTS),
+    isLive: hasValidPayPalConfig(),
+    environment: hasValidPayPalConfig()
+      ? process.env.PAYPAL_ENVIRONMENT === "live"
+        ? "live"
+        : "sandbox"
+      : "demo",
+  });
+}
 
 export async function POST(req: NextRequest) {
-  // Validate required server-side credentials are present.
-  // Report only missing variable names — never values.
-  const missingVars: string[] = [];
-  if (!process.env.PAYPAL_CLIENT_ID) missingVars.push("PAYPAL_CLIENT_ID");
-  if (!process.env.PAYPAL_CLIENT_SECRET) missingVars.push("PAYPAL_CLIENT_SECRET");
-  if (!process.env.PAYPAL_ENVIRONMENT) missingVars.push("PAYPAL_ENVIRONMENT");
-
-  if (missingVars.length > 0 && hasValidPayPalConfig()) {
-    // Config looks valid, missing vars might just be PAYPAL_ENVIRONMENT defaulting
-  } else if (missingVars.includes("PAYPAL_CLIENT_ID") || missingVars.includes("PAYPAL_CLIENT_SECRET")) {
-    return Response.json(
-      { error: `Missing required environment variables: ${missingVars.join(", ")}` },
-      { status: 500 }
-    );
-  }
-
   try {
-    const body = await req.json();
-    const { productId } = body;
+    const body = await req.json().catch(() => ({}));
+    const rawProductId =
+      typeof body?.productId === "string" ? body.productId.trim() : undefined;
 
-    // Resolve product from server-side catalog by ID — never accept amount from browser.
-    const product = SANDBOX_PRODUCTS[productId ?? "demo_10"] ?? SANDBOX_PRODUCTS.demo_10;
+    const product = resolveSandboxProduct(rawProductId);
+    if (!product) {
+      return Response.json(
+        { error: `Unknown product identifier "${rawProductId}".` },
+        { status: 400 }
+      );
+    }
 
-    // Explicitly use sandbox endpoint via PAYPAL_ENVIRONMENT (not NODE_ENV).
+    // Live PayPal Sandbox / Production Order creation
     if (hasValidPayPalConfig()) {
       const ordersController = getOrdersController();
       const response = await ordersController.createOrder({
@@ -76,7 +52,7 @@ export async function POST(req: NextRequest) {
                 value: product.amount,
               },
               description: product.description,
-              customId: productId ?? "demo_10",
+              customId: product.id,
             },
           ],
           paymentSource: {
@@ -92,23 +68,24 @@ export async function POST(req: NextRequest) {
       });
 
       const order = response.result;
-      // Return order ID and resolved product metadata — never credentials or tokens.
       return Response.json({
         id: order.id,
         status: order.status,
+        productId: product.id,
         productName: product.name,
         amount: product.amount,
         currency: product.currency,
-        environment: process.env.PAYPAL_ENVIRONMENT ?? "sandbox",
+        environment: process.env.PAYPAL_ENVIRONMENT === "live" ? "live" : "sandbox",
         isLive: true,
       });
     }
 
-    // Demo fallback (no valid credentials)
+    // Zero-Config Demo Mode fallback when PayPal Sandbox credentials are absent
     const demoOrderId = `ORD-DEMO-${Date.now().toString().slice(-8)}`;
     return Response.json({
       id: demoOrderId,
       status: "CREATED",
+      productId: product.id,
       productName: product.name,
       amount: product.amount,
       currency: product.currency,
@@ -116,31 +93,10 @@ export async function POST(req: NextRequest) {
       isLive: false,
     });
   } catch (err) {
-    let errMsg = "Failed to create order";
-    let debugId: string | undefined;
-    if (err && typeof err === "object") {
-      const sdkErr = err as Record<string, unknown>;
-      const result = sdkErr.result as Record<string, unknown> | undefined;
-      const headers = sdkErr.headers as Record<string, string> | undefined;
-      debugId = headers?.["paypal-debug-id"];
-
-      if (result?.error_description && typeof result.error_description === "string") {
-        errMsg = `${result.error ?? "error"}: ${result.error_description}`;
-      } else if (result?.message && typeof result.message === "string") {
-        errMsg = result.message;
-        const details = result.details as Array<Record<string, string>> | undefined;
-        if (details?.[0]?.issue) {
-          errMsg = `${details[0].issue}: ${details[0].description ?? result.message}`;
-        }
-      } else if (sdkErr.message && typeof sdkErr.message === "string" && sdkErr.message.trim()) {
-        errMsg = sdkErr.message;
-      } else if (typeof sdkErr.statusCode === "number") {
-        errMsg = `PayPal API error (HTTP ${sdkErr.statusCode})`;
-      }
-    }
-    console.error("[/api/orders/create] error:", errMsg, debugId ? `(debug_id: ${debugId})` : "");
+    const { message, debugId } = extractPayPalSdkError(err, "Failed to create PayPal order");
+    console.error("[/api/orders/create] error:", message, debugId ? `(debug_id: ${debugId})` : "");
     return Response.json(
-      { error: errMsg, debug_id: debugId },
+      { error: message, debug_id: debugId },
       { status: 500 }
     );
   }
