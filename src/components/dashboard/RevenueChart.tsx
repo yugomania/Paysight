@@ -11,12 +11,14 @@ import {
 } from "recharts";
 import type { RevenueDataPoint, DateRangeOption } from "@/types";
 import { format, parseISO } from "date-fns";
-import { TrendingUp, Sparkles } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, Sparkles } from "lucide-react";
+import { formatMoney } from "./StatusBadge";
 
 interface RevenueChartProps {
   data: RevenueDataPoint[];
   loading: boolean;
   dateRange: DateRangeOption;
+  currency?: string;
   onDateRangeChange: (range: DateRangeOption) => void;
   onExplainTrend?: () => void;
 }
@@ -35,49 +37,80 @@ function formatTick(date: string): string {
   }
 }
 
-function formatCurrency(value: number) {
+function formatYAxis(value: number) {
   if (value >= 1000) return `$${(value / 1000).toFixed(1)}k`;
   return `$${value.toFixed(0)}`;
+}
+
+function computeWindowTrendPct(data: RevenueDataPoint[]): number | null {
+  if (data.length < 4) return null;
+  const mid = Math.floor(data.length / 2);
+  const firstHalf = data.slice(0, mid).reduce((s, d) => s + d.revenue, 0);
+  const secondHalf = data.slice(mid).reduce((s, d) => s + d.revenue, 0);
+  if (firstHalf <= 0) return null;
+  return parseFloat((((secondHalf - firstHalf) / firstHalf) * 100).toFixed(1));
 }
 
 export function RevenueChart({
   data,
   loading,
   dateRange,
+  currency = "USD",
   onDateRangeChange,
   onExplainTrend,
 }: RevenueChartProps) {
   const tickInterval = dateRange === "90d" ? 6 : dateRange === "30d" ? 4 : 0;
-
+  const activeCurrency = data[0]?.currency || currency || "USD";
   const totalPeriodRevenue = data.reduce((acc, curr) => acc + curr.revenue, 0);
+  const totalTxCount = data.reduce((acc, curr) => acc + curr.transactions, 0);
+  const trendPct = computeWindowTrendPct(data);
 
   return (
     <div className="bg-white border border-[#E5E5E5] rounded-xl p-5 flex flex-col gap-4">
-      {/* Top Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E5E5E5] pb-4">
         <div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-[#626262]">
-              Settlement Velocity
+              Settlement Velocity ({activeCurrency})
             </span>
-            <span className="inline-flex items-center gap-1 text-xs font-semibold text-[#15803D] bg-[#ECFDF3] px-2 py-0.5 rounded border border-[#BBF7D0]">
-              <TrendingUp className="w-3 h-3" />
-              +14.8% trend
-            </span>
+
+            {trendPct !== null ? (
+              <span
+                className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded border ${
+                  trendPct >= 0
+                    ? "text-[#15803D] bg-[#ECFDF3] border-[#BBF7D0]"
+                    : "text-[#B91C1C] bg-[#FEF2F2] border-[#FECACA]"
+                }`}
+                title="Second half vs. first half revenue in selected window"
+              >
+                {trendPct >= 0 ? (
+                  <TrendingUp className="w-3 h-3" />
+                ) : (
+                  <TrendingDown className="w-3 h-3" />
+                )}
+                <span>
+                  {trendPct >= 0 ? "+" : ""}
+                  {trendPct}% half-over-half
+                </span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-[#626262] bg-[#F7F7F8] px-2 py-0.5 rounded border border-[#E5E5E5]">
+                <Minus className="w-3 h-3" />
+                <span>{totalTxCount} orders in {dateRange}</span>
+              </span>
+            )}
           </div>
+
           <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-2xl font-bold tracking-tight text-[#171717] tabular-nums">
-              {new Intl.NumberFormat("en-US", {
-                style: "currency",
-                currency: "USD",
-                maximumFractionDigits: 0,
-              }).format(totalPeriodRevenue)}
+            <span className="text-2xl font-bold tracking-tight text-[#171717] tabular-nums font-mono">
+              {formatMoney(totalPeriodRevenue, activeCurrency, 2)}
             </span>
-            <span className="text-xs text-[#626262]">volume processed in interval</span>
+            <span className="text-xs text-[#626262]">
+              completed gross volume ({dateRange} • {activeCurrency})
+            </span>
           </div>
         </div>
 
-        {/* Range Buttons & Contextual AI Action */}
         <div className="flex items-center gap-2">
           {onExplainTrend && (
             <button
@@ -110,9 +143,12 @@ export function RevenueChart({
         </div>
       </div>
 
-      {/* Chart Canvas */}
       {loading ? (
         <div className="h-56 bg-[#F7F7F8] rounded-lg animate-pulse" />
+      ) : totalPeriodRevenue === 0 ? (
+        <div className="h-56 bg-[#F7F7F8] rounded-lg border border-[#E5E5E5] flex items-center justify-center text-xs text-[#626262]">
+          No completed {activeCurrency} settlements recorded in the last {dateRange}.
+        </div>
       ) : (
         <div className="h-56 w-full pt-2">
           <ResponsiveContainer width="100%" height="100%">
@@ -133,7 +169,7 @@ export function RevenueChart({
                 tickLine={false}
               />
               <YAxis
-                tickFormatter={formatCurrency}
+                tickFormatter={formatYAxis}
                 tick={{ fill: "#626262", fontSize: 11 }}
                 axisLine={false}
                 tickLine={false}
@@ -149,9 +185,9 @@ export function RevenueChart({
                 }}
                 formatter={(value: unknown, name: unknown) => [
                   name === "revenue" && typeof value === "number"
-                    ? `$${value.toFixed(2)} USD`
+                    ? formatMoney(value, activeCurrency, 2)
                     : String(value ?? 0),
-                  name === "revenue" ? "Daily Revenue" : "Transactions",
+                  name === "revenue" ? `Daily Revenue (${activeCurrency})` : "Transactions",
                 ]}
                 labelFormatter={(label) => `Date: ${formatTick(String(label))}`}
               />
@@ -170,4 +206,3 @@ export function RevenueChart({
     </div>
   );
 }
-

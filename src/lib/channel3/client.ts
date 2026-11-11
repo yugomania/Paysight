@@ -1,91 +1,188 @@
-import type { PricingComparison, CompetitorProduct } from "@/types";
 import { format } from "date-fns";
+import type {
+  CompetitorProduct,
+  PricingComparison,
+  PricingDataSource,
+} from "@/types";
 
 const BASE_URL = "https://api.trychannel3.com/v1";
-const API_KEY = process.env.CHANNEL3_API_KEY ?? "";
-
-// ─── Simple in-memory cache to preserve API rate limits ───────────────────────
+const CACHE_TTL_MS = 1000 * 60 * 15; // 15 minutes
+const MAX_CACHE_ENTRIES = 100;
 
 interface CacheEntry<T> {
   data: T;
   expiresAt: number;
 }
 
-const cache = new Map<string, CacheEntry<unknown>>();
-const CACHE_TTL_MS = 1000 * 60 * 15; // 15 minutes
+const cache = new Map<string, CacheEntry<SearchResultMeta>>();
 
-function fromCache<T>(key: string): T | null {
-  const entry = cache.get(key) as CacheEntry<T> | undefined;
-  if (entry && Date.now() < entry.expiresAt) return entry.data;
+function fromCache(key: string): SearchResultMeta | null {
+  const entry = cache.get(key);
+  if (entry && Date.now() < entry.expiresAt) {
+    return { ...entry.data, fromCache: true };
+  }
+  if (entry) {
+    cache.delete(key);
+  }
   return null;
 }
 
-function toCache<T>(key: string, data: T): void {
+function toCache(key: string, data: SearchResultMeta): void {
+  if (cache.size >= MAX_CACHE_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey) cache.delete(oldestKey);
+  }
   cache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+}
+
+export function clearPricingCache(): void {
+  cache.clear();
+}
+
+export function hasValidChannel3Config(): boolean {
+  const apiKey = process.env.CHANNEL3_API_KEY?.trim() ?? "";
+  return Boolean(
+    apiKey &&
+      apiKey !== "your_channel3_api_key" &&
+      !apiKey.includes("placeholder") &&
+      apiKey.length > 8
+  );
 }
 
 // ─── Matching & Categorization Helpers ───────────────────────────────────────
 
 function checkExactMatch(query: string, candidateTitle: string): boolean {
-  const qTokens = query.toLowerCase().replace(/[^a-z0-9 ]/g, "").split(/\s+/).filter(Boolean);
+  const qTokens = query
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .split(/\s+/)
+    .filter((t) => t.length > 1);
+  if (qTokens.length === 0) return false;
   const cTitle = candidateTitle.toLowerCase();
-  // Exact match requires core keywords to be present
   const matches = qTokens.filter((token) => cTitle.includes(token));
   return matches.length >= Math.min(qTokens.length, 3);
 }
 
-// ─── Search Channel3 or Structured Sample Catalog ───────────────────────────
+export interface SearchResultMeta {
+  products: CompetitorProduct[];
+  source: PricingDataSource;
+  isSimulated: boolean;
+  fromCache: boolean;
+  errorNote?: string;
+}
 
-export async function searchProducts(query: string): Promise<CompetitorProduct[]> {
+// ─── Search Channel3 or Structured Demo Catalog ──────────────────────────────
+
+export async function searchProductsWithMeta(
+  query: string
+): Promise<SearchResultMeta> {
   const cleanQuery = query.trim();
-  const key = `search:${cleanQuery.toLowerCase()}`;
-  const cached = fromCache<CompetitorProduct[]>(key);
+  if (!cleanQuery) {
+    return {
+      products: [],
+      source: hasValidChannel3Config() ? "channel3_live" : "structured_fallback",
+      isSimulated: !hasValidChannel3Config(),
+      fromCache: false,
+      errorNote: "Empty search query.",
+    };
+  }
+
+  const hasLiveKey = hasValidChannel3Config();
+  const key = `search:${hasLiveKey ? "live" : "demo"}:${cleanQuery.toLowerCase()}`;
+  const cached = fromCache(key);
   if (cached) return cached;
 
   const nowStr = new Date().toISOString();
 
-  // If live Channel3 API Key is configured
-  if (API_KEY && API_KEY !== "your_channel3_api_key" && !API_KEY.includes("placeholder")) {
+  if (hasLiveKey) {
+    const apiKey = process.env.CHANNEL3_API_KEY!.trim();
     try {
-      const res = await fetch(`${BASE_URL}/products/search?q=${encodeURIComponent(cleanQuery)}&limit=10`, {
-        headers: { "x-api-key": API_KEY, Accept: "application/json" },
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        const rawProducts = data.products ?? data.items ?? [];
-        const products: CompetitorProduct[] = rawProducts.map(
-          (p: Record<string, unknown>): CompetitorProduct => {
-            const title = (p.name as string) || (p.title as string) || cleanQuery;
-            return {
-              productName: title,
-              retailer: (p.retailer as string) || (p.store as string) || "Retailer",
-              price: parseFloat(String(p.price || "0")),
-              currency: (p.currency as string) || "USD",
-              url: (p.url as string) || `https://google.com/search?q=${encodeURIComponent(title)}`,
-              inStock: p.in_stock !== false,
-              imageUrl: p.image_url as string | undefined,
-              condition: (p.condition as "new" | "refurbished" | "used") || "new",
-              retrievalTime: nowStr,
-              isExactMatch: checkExactMatch(cleanQuery, title),
-            };
-          }
-        );
-
-        if (products.length > 0) {
-          toCache(key, products);
-          return products;
+      const res = await fetch(
+        `${BASE_URL}/products/search?q=${encodeURIComponent(cleanQuery)}&limit=10`,
+        {
+          headers: { "x-api-key": apiKey, Accept: "application/json" },
         }
+      );
+
+      if (!res.ok) {
+        return {
+          products: [],
+          source: "channel3_live",
+          isSimulated: false,
+          fromCache: false,
+          errorNote: `Channel3 API returned HTTP ${res.status}. Live listings unavailable.`,
+        };
       }
+
+      const data = await res.json();
+      const rawProducts = data.products ?? data.items ?? [];
+      const products: CompetitorProduct[] = (Array.isArray(rawProducts) ? rawProducts : [])
+        .map((p: Record<string, unknown>): CompetitorProduct | null => {
+          const title = String(p.name || p.title || "").trim();
+          const price = parseFloat(String(p.price ?? "0"));
+          if (!title || !Number.isFinite(price) || price <= 0) return null;
+          const isExact = checkExactMatch(cleanQuery, title);
+          return {
+            productName: title,
+            retailer: String(p.retailer || p.store || "Retailer"),
+            price: parseFloat(price.toFixed(2)),
+            currency: String(p.currency || "USD").toUpperCase(),
+            url: String(
+              p.url || `https://www.google.com/search?q=${encodeURIComponent(title)}`
+            ),
+            inStock: p.in_stock !== false,
+            imageUrl: typeof p.image_url === "string" ? p.image_url : undefined,
+            condition:
+              (p.condition as "new" | "refurbished" | "used") || "new",
+            retrievalTime: nowStr,
+            isExactMatch: isExact,
+            matchConfidence: isExact ? "exact" : "approximate",
+          };
+        })
+        .filter((item): item is CompetitorProduct => item !== null);
+
+      const liveMeta: SearchResultMeta = {
+        products,
+        source: "channel3_live",
+        isSimulated: false,
+        fromCache: false,
+        errorNote:
+          products.length === 0
+            ? `No comparable Channel3 listings returned for "${cleanQuery}".`
+            : undefined,
+      };
+      toCache(key, liveMeta);
+      return liveMeta;
     } catch (err) {
-      console.warn("[Channel3] Live search error, falling back to structured catalog:", err);
+      console.warn(
+        "[Channel3] Live request failed:",
+        err instanceof Error ? err.message : err
+      );
+      return {
+        products: [],
+        source: "channel3_live",
+        isSimulated: false,
+        fromCache: false,
+        errorNote: "Channel3 live API request failed. Check network or CHANNEL3_API_KEY.",
+      };
     }
   }
 
-  // Fallback to structured deterministic catalog for reliable demo & offline verification
-  const sample = getStructuredCatalog(cleanQuery, nowStr);
-  toCache(key, sample);
-  return sample;
+  // Demo Mode fallback (only when CHANNEL3_API_KEY is not configured)
+  const demoResult = getStructuredDemoCatalog(cleanQuery, nowStr);
+  const demoMeta: SearchResultMeta = {
+    products: demoResult.products,
+    source: demoResult.source,
+    isSimulated: true,
+    fromCache: false,
+  };
+  toCache(key, demoMeta);
+  return demoMeta;
+}
+
+export async function searchProducts(query: string): Promise<CompetitorProduct[]> {
+  const res = await searchProductsWithMeta(query);
+  return res.products;
 }
 
 // ─── Build Pricing Comparison with Defined Comparable Subset ────────────────
@@ -95,71 +192,120 @@ export async function getPricingComparison(
   yourPrice: number,
   yourSku?: string
 ): Promise<PricingComparison> {
-  const competitors = await searchProducts(productName);
+  const safePrice = Number.isFinite(yourPrice) && yourPrice >= 0 ? yourPrice : 0;
+  const searchMeta = await searchProductsWithMeta(productName);
+  const competitors = searchMeta.products;
   const nowStr = new Date().toISOString();
 
   if (competitors.length === 0) {
     return {
       yourProductName: productName,
-      yourPrice,
+      yourPrice: parseFloat(safePrice.toFixed(2)),
       yourSku,
-      marketMinPrice: yourPrice,
-      marketMaxPrice: yourPrice,
-      marketAvgPrice: yourPrice,
+      currency: "USD",
+      marketMinPrice: 0,
+      marketMaxPrice: 0,
+      marketAvgPrice: 0,
+      priceDifference: 0,
+      priceDifferencePct: null,
       competitorCount: 0,
       pricePosition: "unknown",
       competitors: [],
       exactMatchesCount: 0,
       approximateMatchesCount: 0,
       comparisonTimestamp: nowStr,
-      disclaimer: "No comparable listings retrieved for this query. Enter a specific product model or brand.",
+      source: searchMeta.source,
+      isSimulated: searchMeta.isSimulated,
+      fromCache: searchMeta.fromCache,
+      disclaimer:
+        searchMeta.errorNote ||
+        "No comparable listings retrieved for this query. Try a more specific brand or model.",
     };
   }
 
-  // Separate exact matches from approximate alternatives
   const exactMatches = competitors.filter((c) => c.isExactMatch && c.price > 0);
   const approximateMatches = competitors.filter((c) => !c.isExactMatch && c.price > 0);
 
-  // Compute benchmarks specifically from defined comparable set:
-  // Prefer exact matches if >= 2 available; otherwise use all active comparable listings
-  const benchmarkSet = exactMatches.length >= 2 ? exactMatches : competitors.filter((c) => c.price > 0);
+  // Prefer exact matches if >= 2 exist; otherwise use all retrieved comparable items
+  const benchmarkSet =
+    exactMatches.length >= 2
+      ? exactMatches
+      : competitors.filter((c) => c.price > 0);
   const prices = benchmarkSet.map((c) => c.price);
 
-  const marketMinPrice = prices.length > 0 ? Math.min(...prices) : yourPrice;
-  const marketMaxPrice = prices.length > 0 ? Math.max(...prices) : yourPrice;
-  const marketAvgPrice = prices.length > 0 ? prices.reduce((s, p) => s + p, 0) / prices.length : yourPrice;
+  const marketMinPrice = prices.length > 0 ? Math.min(...prices) : 0;
+  const marketMaxPrice = prices.length > 0 ? Math.max(...prices) : 0;
+  const marketAvgPrice =
+    prices.length > 0
+      ? prices.reduce((s, p) => s + p, 0) / prices.length
+      : 0;
 
-  let pricePosition: PricingComparison["pricePosition"] = "competitive";
-  if (yourPrice > marketAvgPrice * 1.12) pricePosition = "high";
-  else if (yourPrice < marketAvgPrice * 0.88) pricePosition = "low";
+  let pricePosition: PricingComparison["pricePosition"] = "unknown";
+  if (marketAvgPrice > 0 && safePrice > 0) {
+    if (safePrice > marketAvgPrice * 1.12) pricePosition = "high";
+    else if (safePrice < marketAvgPrice * 0.88) pricePosition = "low";
+    else pricePosition = "competitive";
+  }
 
-  const disclaimer = `Benchmarks calculated from ${benchmarkSet.length} retrieved listings (${exactMatches.length} exact, ${approximateMatches.length} approximate) at ${format(new Date(), "HH:mm:ss 'UTC'")}. Not an exhaustive market census.`;
+  const priceDifference = parseFloat((safePrice - marketAvgPrice).toFixed(2));
+  const priceDifferencePct =
+    marketAvgPrice > 0
+      ? parseFloat((((safePrice - marketAvgPrice) / marketAvgPrice) * 100).toFixed(1))
+      : null;
+
+  const sourceLabel =
+    searchMeta.source === "channel3_live"
+      ? "Channel3 Live API"
+      : searchMeta.source === "structured_fallback"
+      ? "Demo Sample Catalog (CHANNEL3_API_KEY not set)"
+      : "Demo Simulated Reference (CHANNEL3_API_KEY not set)";
+
+  const disclaimer = `[${sourceLabel}] Benchmarks calculated from ${benchmarkSet.length} retrieved listings (${exactMatches.length} exact, ${approximateMatches.length} approximate) at ${format(new Date(), "HH:mm:ss 'UTC'")}. Not an exhaustive market census.`;
 
   return {
     yourProductName: productName,
-    yourPrice,
+    yourPrice: parseFloat(safePrice.toFixed(2)),
     yourSku,
+    currency: benchmarkSet[0]?.currency || "USD",
     marketMinPrice: parseFloat(marketMinPrice.toFixed(2)),
     marketMaxPrice: parseFloat(marketMaxPrice.toFixed(2)),
     marketAvgPrice: parseFloat(marketAvgPrice.toFixed(2)),
+    priceDifference,
+    priceDifferencePct,
     competitorCount: competitors.length,
     pricePosition,
     competitors,
     exactMatchesCount: exactMatches.length,
     approximateMatchesCount: approximateMatches.length,
     comparisonTimestamp: nowStr,
+    source: searchMeta.source,
+    isSimulated: searchMeta.isSimulated,
+    fromCache: searchMeta.fromCache,
     disclaimer,
   };
 }
 
-// ─── Structured Multi-Retailer Sample Catalog ────────────────────────────────
+// ─── Structured Multi-Retailer Demo Catalog ──────────────────────────────────
 
-function getStructuredCatalog(query: string, retrievalTime: string): CompetitorProduct[] {
+function getStructuredDemoCatalog(
+  query: string,
+  retrievalTime: string
+): { products: CompetitorProduct[]; source: PricingDataSource } {
   const q = query.toLowerCase();
 
-  // 1. Headphones
-  if (q.includes("headphone") || q.includes("audio") || q.includes("noise")) {
-    return [
+  const wrap = (
+    items: Omit<CompetitorProduct, "retrievalTime" | "matchConfidence">[]
+  ): { products: CompetitorProduct[]; source: PricingDataSource } => ({
+    source: "structured_fallback",
+    products: items.map((item) => ({
+      ...item,
+      retrievalTime,
+      matchConfidence: item.isExactMatch ? "exact" : "approximate",
+    })),
+  });
+
+  if (q.includes("headphone") || q.includes("audio") || q.includes("noise") || q.includes("sony") || q.includes("bose")) {
+    return wrap([
       {
         productName: "Sony WH-1000XM5 Wireless Noise Canceling Headphones",
         retailer: "Best Buy",
@@ -169,19 +315,17 @@ function getStructuredCatalog(query: string, retrievalTime: string): CompetitorP
         inStock: true,
         brand: "Sony",
         condition: "new",
-        retrievalTime,
         isExactMatch: true,
       },
       {
         productName: "Bose QuietComfort 45 Over-Ear Noise-Cancelling Headphones",
         retailer: "Amazon",
-        price: 149.00,
+        price: 149.0,
         currency: "USD",
         url: "https://www.amazon.com/dp/B098FKXT8L",
         inStock: true,
         brand: "Bose",
         condition: "new",
-        retrievalTime,
         isExactMatch: true,
       },
       {
@@ -193,7 +337,6 @@ function getStructuredCatalog(query: string, retrievalTime: string): CompetitorP
         inStock: true,
         brand: "Sennheiser",
         condition: "new",
-        retrievalTime,
         isExactMatch: true,
       },
       {
@@ -205,15 +348,13 @@ function getStructuredCatalog(query: string, retrievalTime: string): CompetitorP
         inStock: true,
         brand: "Anker",
         condition: "new",
-        retrievalTime,
         isExactMatch: false,
       },
-    ];
+    ]);
   }
 
-  // 2. Keyboards
   if (q.includes("keyboard") || q.includes("mechanical") || q.includes("ergonomic")) {
-    return [
+    return wrap([
       {
         productName: "Keychron Q1 Pro Wireless Custom Mechanical Keyboard",
         retailer: "Amazon",
@@ -223,7 +364,6 @@ function getStructuredCatalog(query: string, retrievalTime: string): CompetitorP
         inStock: true,
         brand: "Keychron",
         condition: "new",
-        retrievalTime,
         isExactMatch: true,
       },
       {
@@ -235,7 +375,6 @@ function getStructuredCatalog(query: string, retrievalTime: string): CompetitorP
         inStock: true,
         brand: "Logitech",
         condition: "new",
-        retrievalTime,
         isExactMatch: true,
       },
       {
@@ -247,7 +386,6 @@ function getStructuredCatalog(query: string, retrievalTime: string): CompetitorP
         inStock: true,
         brand: "Epomaker",
         condition: "new",
-        retrievalTime,
         isExactMatch: true,
       },
       {
@@ -259,15 +397,13 @@ function getStructuredCatalog(query: string, retrievalTime: string): CompetitorP
         inStock: false,
         brand: "Razer",
         condition: "new",
-        retrievalTime,
         isExactMatch: false,
       },
-    ];
+    ]);
   }
 
-  // 3. Webcams
   if (q.includes("webcam") || q.includes("camera") || q.includes("4k")) {
-    return [
+    return wrap([
       {
         productName: "Elgato Facecam Pro 4K60 Ultra HD Webcam",
         retailer: "B&H Photo",
@@ -277,19 +413,17 @@ function getStructuredCatalog(query: string, retrievalTime: string): CompetitorP
         inStock: true,
         brand: "Elgato",
         condition: "new",
-        retrievalTime,
         isExactMatch: true,
       },
       {
         productName: "Logitech Brio 4K Ultra HD Pro Business Webcam",
         retailer: "Amazon",
-        price: 119.00,
+        price: 119.0,
         currency: "USD",
         url: "https://www.amazon.com/dp/B01N5UOYC4",
         inStock: true,
         brand: "Logitech",
         condition: "new",
-        retrievalTime,
         isExactMatch: true,
       },
       {
@@ -301,47 +435,166 @@ function getStructuredCatalog(query: string, retrievalTime: string): CompetitorP
         inStock: true,
         brand: "AnkerWork",
         condition: "new",
-        retrievalTime,
         isExactMatch: false,
       },
-    ];
+    ]);
   }
 
-  // Default dynamic generated comparison for custom queries
+  if (q.includes("hub") || q.includes("usb")) {
+    return wrap([
+      {
+        productName: "Anker 7-in-1 Aluminum USB-C Hub Adapter",
+        retailer: "Amazon",
+        price: 39.99,
+        currency: "USD",
+        url: "https://www.amazon.com/s?k=anker+7+in+1+usb+c+hub",
+        inStock: true,
+        brand: "Anker",
+        condition: "new",
+        isExactMatch: true,
+      },
+      {
+        productName: "Satechi Aluminum Multi-Port V2 USB-C Hub",
+        retailer: "Best Buy",
+        price: 59.99,
+        currency: "USD",
+        url: "https://www.bestbuy.com/site/searchpage.jsp?st=satechi+usb+c+hub",
+        inStock: true,
+        brand: "Satechi",
+        condition: "new",
+        isExactMatch: true,
+      },
+      {
+        productName: "UGREEN Revodok 7-in-1 USB-C Hub",
+        retailer: "Walmart",
+        price: 34.99,
+        currency: "USD",
+        url: "https://www.walmart.com/search?q=ugreen+usb+c+hub",
+        inStock: true,
+        brand: "UGREEN",
+        condition: "new",
+        isExactMatch: false,
+      },
+    ]);
+  }
+
+  if (q.includes("anker") || q.includes("power bank")) {
+    return wrap([
+      {
+        productName: "Anker 737 Power Bank (PowerCore 24K)",
+        retailer: "Amazon",
+        price: 119.99,
+        currency: "USD",
+        url: "https://www.amazon.com/s?k=Anker+737+Power+Bank",
+        inStock: true,
+        brand: "Anker",
+        condition: "new",
+        isExactMatch: true,
+      },
+      {
+        productName: "Anker 737 Portable Charger 140W USB-C",
+        retailer: "Best Buy",
+        price: 139.99,
+        currency: "USD",
+        url: "https://www.bestbuy.com/site/searchpage.jsp?st=Anker+737+Power+Bank",
+        inStock: true,
+        brand: "Anker",
+        condition: "new",
+        isExactMatch: true,
+      },
+      {
+        productName: "Baseus Blade 100W Laptop Power Bank",
+        retailer: "Walmart",
+        price: 89.99,
+        currency: "USD",
+        url: "https://www.walmart.com/search?q=laptop+power+bank",
+        inStock: true,
+        brand: "Baseus",
+        condition: "new",
+        isExactMatch: false,
+      },
+    ]);
+  }
+
+  if (q.includes("mx master") || q.includes("mouse") || q.includes("logitech")) {
+    return wrap([
+      {
+        productName: "Logitech MX Master 3S Performance Wireless Mouse",
+        retailer: "Amazon",
+        price: 94.99,
+        currency: "USD",
+        url: "https://www.amazon.com/s?k=Logitech+MX+Master+3S",
+        inStock: true,
+        brand: "Logitech",
+        condition: "new",
+        isExactMatch: true,
+      },
+      {
+        productName: "Logitech MX Master 3S Bluetooth Mouse",
+        retailer: "Best Buy",
+        price: 99.99,
+        currency: "USD",
+        url: "https://www.bestbuy.com/site/searchpage.jsp?st=Logitech+MX+Master+3S",
+        inStock: true,
+        brand: "Logitech",
+        condition: "new",
+        isExactMatch: true,
+      },
+      {
+        productName: "Keychron M6 Wireless Ergonomic Mouse",
+        retailer: "B&H Photo",
+        price: 69.0,
+        currency: "USD",
+        url: "https://www.bhphotovideo.com/c/search?Ntt=wireless+ergonomic+mouse",
+        inStock: true,
+        brand: "Keychron",
+        condition: "new",
+        isExactMatch: false,
+      },
+    ]);
+  }
+
+  // Clearly labelled synthetic fallback ONLY in Demo Mode when CHANNEL3_API_KEY is unconfigured
   const basePrice = 65.0;
-  return [
-    {
-      productName: `${query} (Official Listing)`,
-      retailer: "Amazon",
-      price: parseFloat((basePrice * 1.05).toFixed(2)),
-      currency: "USD",
-      url: `https://www.amazon.com/s?k=${encodeURIComponent(query)}`,
-      inStock: true,
-      condition: "new",
-      retrievalTime,
-      isExactMatch: true,
-    },
-    {
-      productName: `${query} (Standard Retail)`,
-      retailer: "Best Buy",
-      price: parseFloat((basePrice * 0.95).toFixed(2)),
-      currency: "USD",
-      url: `https://www.bestbuy.com/site/searchpage.jsp?st=${encodeURIComponent(query)}`,
-      inStock: true,
-      condition: "new",
-      retrievalTime,
-      isExactMatch: true,
-    },
-    {
-      productName: `${query} (Value Package)`,
-      retailer: "Walmart",
-      price: parseFloat((basePrice * 0.90).toFixed(2)),
-      currency: "USD",
-      url: `https://www.walmart.com/search?q=${encodeURIComponent(query)}`,
-      inStock: true,
-      condition: "new",
-      retrievalTime,
-      isExactMatch: false,
-    },
-  ];
+  return {
+    source: "synthetic_fallback",
+    products: [
+      {
+        productName: `${query} (Demo Simulated Listing A)`,
+        retailer: "Amazon (Demo Reference)",
+        price: parseFloat((basePrice * 1.05).toFixed(2)),
+        currency: "USD",
+        url: `https://www.amazon.com/s?k=${encodeURIComponent(query)}`,
+        inStock: true,
+        condition: "new",
+        retrievalTime,
+        isExactMatch: true,
+        matchConfidence: "exact",
+      },
+      {
+        productName: `${query} (Demo Simulated Listing B)`,
+        retailer: "Best Buy (Demo Reference)",
+        price: parseFloat((basePrice * 0.95).toFixed(2)),
+        currency: "USD",
+        url: `https://www.bestbuy.com/site/searchpage.jsp?st=${encodeURIComponent(query)}`,
+        inStock: true,
+        condition: "new",
+        retrievalTime,
+        isExactMatch: true,
+        matchConfidence: "exact",
+      },
+      {
+        productName: `${query} (Demo Simulated Alternative)`,
+        retailer: "Walmart (Demo Reference)",
+        price: parseFloat((basePrice * 0.9).toFixed(2)),
+        currency: "USD",
+        url: `https://www.walmart.com/search?q=${encodeURIComponent(query)}`,
+        inStock: true,
+        condition: "new",
+        retrievalTime,
+        isExactMatch: false,
+        matchConfidence: "approximate",
+      },
+    ],
+  };
 }

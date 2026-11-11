@@ -10,14 +10,16 @@ import {
   ExternalLink,
   X,
   User,
+  Wallet,
 } from "lucide-react";
 
 export type NavTab =
   | "overview"
   | "transactions"
   | "invoices"
-  | "disputes"
   | "pricing"
+  | "budget"
+  | "disputes"
   | "checkout";
 
 interface SidebarProps {
@@ -41,9 +43,7 @@ export function PaySightLogo({
   return (
     <div
       className={`${className} rounded-md flex items-center justify-center font-black text-sm select-none ${
-        inverted
-          ? "bg-white text-[#111111]"
-          : "bg-[#111111] text-white"
+        inverted ? "bg-white text-[#111111]" : "bg-[#111111] text-white"
       }`}
       aria-hidden="true"
     >
@@ -64,6 +64,7 @@ export function Sidebar({
     { id: "overview" as NavTab, label: "Overview", icon: LayoutDashboard },
     { id: "transactions" as NavTab, label: "Transactions", icon: CreditCard },
     { id: "invoices" as NavTab, label: "Invoices", icon: FileText },
+    { id: "budget" as NavTab, label: "Budget intelligence", icon: Wallet, tag: "Planner" },
     { id: "pricing" as NavTab, label: "Price comparison", icon: Radar, tag: "Channel3" },
     {
       id: "disputes" as NavTab,
@@ -92,9 +93,7 @@ export function Sidebar({
             <PaySightLogo inverted className="w-7 h-7" />
             <div>
               <div className="flex items-center gap-1.5">
-                <span className="font-bold text-sm tracking-tight text-white">
-                  PaySight
-                </span>
+                <span className="font-bold text-sm tracking-tight text-white">PaySight</span>
                 <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-[#242424] text-[#A3A3A3] border border-[#333333]">
                   v2.0
                 </span>
@@ -105,9 +104,9 @@ export function Sidebar({
             </div>
           </div>
 
-          {/* Close button for mobile drawer */}
           {onClose && (
             <button
+              type="button"
               onClick={onClose}
               className="lg:hidden p-1.5 text-[#A3A3A3] hover:text-white hover:bg-[#242424] rounded-md transition-colors"
               aria-label="Close menu"
@@ -118,7 +117,7 @@ export function Sidebar({
         </div>
 
         {/* Primary Navigation List */}
-        <nav className="p-3 space-y-1">
+        <nav className="p-3 space-y-1" aria-label="Primary navigation">
           <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-[#737373]">
             Navigation
           </div>
@@ -137,7 +136,6 @@ export function Sidebar({
                 }`}
               >
                 <div className="flex items-center min-w-0">
-                  {/* Active small orange marker */}
                   {isActive && (
                     <span className="w-1.5 h-3.5 rounded-full bg-[#C2410C] mr-2.5 flex-shrink-0" />
                   )}
@@ -171,9 +169,9 @@ export function Sidebar({
             );
           })}
 
-          {/* Secondary Demo Tools Section */}
+          {/* Secondary Sandbox Tools Section */}
           <div className="pt-4 px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-[#737373]">
-            Demo Tools
+            Checkout Terminal
           </div>
           {secondaryNavItems.map((item) => {
             const Icon = item.icon;
@@ -201,7 +199,7 @@ export function Sidebar({
                   <span className="truncate">{item.label}</span>
                 </div>
                 <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 rounded bg-[#242424] text-[#A3A3A3] border border-[#333333]">
-                  Sandbox
+                  {isLiveConnected ? "Sandbox" : "Demo"}
                 </span>
               </button>
             );
@@ -209,9 +207,8 @@ export function Sidebar({
         </nav>
       </div>
 
-      {/* Account / Controls at Bottom */}
+      {/* Environment Status & Footer */}
       <div className="p-3 border-t border-[#242424] space-y-2.5">
-        {/* Environment Status Badge */}
         <div className="bg-[#1A1A1A] border border-[#242424] rounded-lg p-2.5 flex flex-col gap-1 text-xs">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-semibold text-[#737373] uppercase tracking-wider">
@@ -231,23 +228,27 @@ export function Sidebar({
           </div>
         </div>
 
-        {/* User Account Row */}
         <div className="flex items-center justify-between px-2 py-1.5">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-7 h-7 rounded-md bg-[#242424] text-white flex items-center justify-center text-xs font-bold border border-[#333333] flex-shrink-0">
               <User className="w-3.5 h-3.5 text-[#A3A3A3]" />
             </div>
             <div className="flex flex-col min-w-0">
-              <span className="text-xs font-semibold text-white truncate">Merchant Demo</span>
-              <span className="text-[10px] text-[#737373] truncate">judge@hackathon.dev</span>
+              <span className="text-xs font-semibold text-white truncate">
+                Merchant Workspace
+              </span>
+              <span className="text-[10px] text-[#737373] truncate">
+                {isLiveConnected ? "Sandbox Connected" : "Local Demo Mode"}
+              </span>
             </div>
           </div>
           <a
-            href="https://github.com/yugomania/ai-interface"
+            href="https://github.com/yugomania/Paysight"
             target="_blank"
             rel="noopener noreferrer"
             title="View PaySight GitHub Repository"
             className="text-[#737373] hover:text-white p-1 rounded hover:bg-[#242424] transition-colors"
+            aria-label="PaySight GitHub Repository"
           >
             <ExternalLink className="w-3.5 h-3.5" />
           </a>
@@ -258,12 +259,10 @@ export function Sidebar({
 
   return (
     <>
-      {/* Desktop Persistent Sidebar */}
       <aside className="hidden lg:flex flex-col h-screen sticky top-0 flex-shrink-0 z-30">
         {content}
       </aside>
 
-      {/* Mobile Drawer Overlay */}
       {isOpen && (
         <div className="fixed inset-0 z-50 lg:hidden flex">
           <div

@@ -1,9 +1,21 @@
 "use client";
 
-import { Search, Sparkles, Plus, RotateCw, GitFork, ExternalLink, Menu } from "lucide-react";
+import type { RefObject } from "react";
+import {
+  Search,
+  Sparkles,
+  Plus,
+  RotateCw,
+  GitFork,
+  ExternalLink,
+  Menu,
+  X,
+} from "lucide-react";
 import { PaySightLogo } from "@/components/layout/Sidebar";
 
 interface TopCommandBarProps {
+  searchValue?: string;
+  searchInputRef?: RefObject<HTMLInputElement | null>;
   onSearchChange?: (query: string) => void;
   onOpenQuickInvoice?: () => void;
   onRefresh?: () => void;
@@ -14,6 +26,8 @@ interface TopCommandBarProps {
 }
 
 export function TopCommandBar({
+  searchValue = "",
+  searchInputRef,
   onSearchChange,
   onOpenQuickInvoice,
   onRefresh,
@@ -24,9 +38,10 @@ export function TopCommandBar({
 }: TopCommandBarProps) {
   return (
     <header className="h-16 border-b border-[#E5E5E5] bg-white px-4 md:px-6 flex items-center justify-between gap-3 sticky top-0 z-20">
-      {/* Left: Mobile Drawer Trigger + PaySight Brand (visible on mobile) */}
+      {/* Left: Mobile Drawer Trigger + Brand */}
       <div className="flex items-center gap-3 lg:hidden">
         <button
+          type="button"
           onClick={onToggleMobileMenu}
           className="p-2 -ml-1.5 rounded-lg text-[#171717] hover:bg-[#F7F7F8] border border-[#E5E5E5] transition-colors"
           aria-label="Open navigation menu"
@@ -36,9 +51,7 @@ export function TopCommandBar({
 
         <div className="flex items-center gap-2">
           <PaySightLogo inverted={false} className="w-6 h-6 text-xs" />
-          <span className="font-bold text-sm tracking-tight text-[#171717]">
-            PaySight
-          </span>
+          <span className="font-bold text-sm tracking-tight text-[#171717]">PaySight</span>
         </div>
       </div>
 
@@ -48,21 +61,34 @@ export function TopCommandBar({
           <Search className="w-4 h-4" />
         </div>
         <input
+          ref={searchInputRef}
           type="text"
+          value={searchValue}
           onChange={(e) => onSearchChange?.(e.target.value)}
           placeholder="Search transactions, customers, invoices..."
-          className="w-full bg-white border border-[#E5E5E5] rounded-lg pl-9 pr-12 py-2 text-xs text-[#171717] placeholder:text-[#626262] focus:outline-none focus:ring-2 focus:ring-[#FFF3EB] focus:border-[#C2410C] transition-all"
+          aria-label="Search transactions, customers, and invoices"
+          className="w-full bg-white border border-[#E5E5E5] rounded-lg pl-9 pr-14 py-2 text-xs text-[#171717] placeholder:text-[#626262] focus:outline-none focus:ring-2 focus:ring-[#FFF3EB] focus:border-[#C2410C] transition-all"
         />
-        <div className="absolute inset-y-0 right-0 pr-2.5 flex items-center pointer-events-none">
-          <kbd className="hidden md:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-mono font-medium text-[#626262] bg-[#F7F7F8] border border-[#E5E5E5] rounded">
-            ⌘K
-          </kbd>
+        <div className="absolute inset-y-0 right-0 pr-2.5 flex items-center gap-1">
+          {searchValue ? (
+            <button
+              type="button"
+              onClick={() => onSearchChange?.("")}
+              className="p-0.5 text-[#626262] hover:text-[#171717] rounded"
+              aria-label="Clear search"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          ) : (
+            <kbd className="hidden md:inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-mono font-medium text-[#626262] bg-[#F7F7F8] border border-[#E5E5E5] rounded pointer-events-none">
+              ⌘K
+            </kbd>
+          )}
         </div>
       </div>
 
       {/* Right Action Cluster */}
       <div className="flex items-center gap-2">
-        {/* Prominent Ask PaySight Collapsible Trigger */}
         <button
           type="button"
           onClick={onToggleChat}
@@ -80,19 +106,21 @@ export function TopCommandBar({
           </span>
         </button>
 
-        {/* Refresh button */}
         <button
+          type="button"
           onClick={onRefresh}
           disabled={isRefreshing}
-          title="Refresh real-time data"
+          title="Refresh dashboard data"
           className="p-2 rounded-lg bg-white hover:bg-[#F7F7F8] text-[#171717] border border-[#E5E5E5] transition-colors disabled:opacity-50"
           aria-label="Refresh dashboard data"
         >
-          <RotateCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-[#C2410C]" : ""}`} />
+          <RotateCw
+            className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-[#C2410C]" : ""}`}
+          />
         </button>
 
-        {/* Primary Action Button: Create Invoice */}
         <button
+          type="button"
           onClick={onOpenQuickInvoice}
           className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#C2410C] hover:bg-[#9A3412] text-white text-xs font-semibold shadow-xs transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-[#C2410C]"
         >
@@ -100,9 +128,8 @@ export function TopCommandBar({
           <span className="hidden xs:inline">New Invoice</span>
         </button>
 
-        {/* GitHub Repository button */}
         <a
-          href="https://github.com/yugomania/ai-interface"
+          href="https://github.com/yugomania/Paysight"
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white hover:bg-[#F7F7F8] text-[#171717] text-xs font-medium border border-[#E5E5E5] transition-colors"
@@ -116,4 +143,3 @@ export function TopCommandBar({
     </header>
   );
 }
-

@@ -5,13 +5,24 @@ export const maxDuration = 60;
 
 export async function POST(req: Request) {
   try {
-    const { messages } = await req.json();
+    const body = await req.json().catch(() => null);
+    const messages = body?.messages;
 
-    if (!messages || !Array.isArray(messages)) {
-      return new Response(JSON.stringify({ error: "Invalid messages" }), {
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return new Response(JSON.stringify({ error: "Invalid messages array" }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
       });
+    }
+
+    if (messages.length > 50) {
+      return new Response(
+        JSON.stringify({ error: "Conversation history limit exceeded (max 50 messages)" }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
     }
 
     return await createChatStream(messages as ChatMessage[]);

@@ -11,16 +11,18 @@ services:
         value: production
       - key: PAYPAL_ENVIRONMENT
         value: sandbox
+      - key: GEMINI_MODEL
+        value: gemini-2.0-flash
       - key: PAYPAL_CLIENT_ID
         sync: false
       - key: PAYPAL_CLIENT_SECRET
         sync: false
       - key: NEXT_PUBLIC_PAYPAL_CLIENT_ID
         sync: false
+      - key: PAYPAL_WEBHOOK_ID
+        sync: false
       - key: GOOGLE_GENERATIVE_AI_API_KEY
         sync: false
       - key: CHANNEL3_API_KEY
-        sync: false
-      - key: AG_GRID_LICENSE_KEY
         sync: false
     autoDeploy: true
