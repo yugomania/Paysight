@@ -5,7 +5,7 @@
  * Why deferred:
  *   The active PaySight runtime calls StoreRepository methods synchronously from
  *   src/lib/paypal/api.ts, src/lib/budget/service.ts, and src/app/api/webhooks/paypal/route.ts
- *   as well as all 7 automated test suites. Introducing an async Postgres driver without
+ *   as well as all 8 automated test suites. Introducing an async Postgres driver without
  *   provisioning DATABASE_URL or migrating every service/test boundary to async calls would
  *   destabilize Demo Mode and local development.
  *

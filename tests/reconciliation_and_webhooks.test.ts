@@ -8,8 +8,10 @@ import { POST as webhookHandler } from "../src/app/api/webhooks/paypal/route";
 import {
   captureServerSideOrder,
   createInvoice,
+  listInvoicesWithMeta,
   listTransactions,
 } from "../src/lib/paypal/api";
+import { invalidatePayPalAuth } from "../src/lib/paypal/client";
 import {
   getStoredInvoiceById,
   getStoredTransactions,
@@ -216,6 +218,55 @@ test("Payment State, Reconciliation & Fail-Closed Webhook Processing", async (t)
       assert.equal(getStoredInvoiceById(inv.id)?.status, "PAID");
     } finally {
       globalThis.fetch = origFetch;
+    }
+  });
+
+  await t.test("listInvoicesWithMeta auto-terminates stale OAuth token on 403 and recovers cleanly", async () => {
+    process.env.PAYPAL_CLIENT_ID = "AX_TEST_CLIENT_ID_LONG_ENOUGH_FOR_VALIDATION";
+    process.env.PAYPAL_CLIENT_SECRET = "EX_TEST_SECRET_LONG_ENOUGH_FOR_VALIDATION";
+    await invalidatePayPalAuth(false);
+
+    const origFetch = globalThis.fetch;
+    let tokenCounter = 0;
+    let terminateCalled = false;
+    let invoiceCalls = 0;
+
+    try {
+      globalThis.fetch = async (url) => {
+        const u = String(url);
+        if (u.endsWith("/v1/oauth2/token")) {
+          tokenCounter += 1;
+          return new Response(
+            JSON.stringify({ access_token: `tok_${tokenCounter}`, expires_in: 32400 }),
+            { status: 200 }
+          );
+        }
+        if (u.endsWith("/v1/oauth2/token/terminate")) {
+          terminateCalled = true;
+          return new Response("", { status: 200 });
+        }
+        if (u.includes("/v2/invoicing/invoices")) {
+          invoiceCalls += 1;
+          if (invoiceCalls === 1) {
+            return new Response(
+              JSON.stringify({ name: "NOT_AUTHORIZED" }),
+              { status: 403 }
+            );
+          }
+          return new Response(JSON.stringify({ items: [] }), { status: 200 });
+        }
+        throw new Error(`Unexpected fetch URL: ${u}`);
+      };
+
+      const res = await listInvoicesWithMeta();
+      assert.equal(terminateCalled, true, "Must terminate stale OAuth token on 403");
+      assert.equal(tokenCounter, 2, "Must re-fetch fresh OAuth token");
+      assert.equal(invoiceCalls, 2);
+      assert.equal(res.isLive, true);
+      assert.equal(res.dataSource, "paypal_sandbox");
+    } finally {
+      globalThis.fetch = origFetch;
+      await invalidatePayPalAuth(false);
     }
   });
 });

@@ -236,15 +236,22 @@ export default function DashboardPage() {
             <div className="flex items-center gap-2">
               <Info className="w-4 h-4 flex-shrink-0" />
               <span>
-                <strong>Demo Mode Active:</strong> Showing deterministic sample data from{" "}
-                <code>.data/paysight-db.json</code>.{" "}
-                {kpis?.dataWarning
-                  ? kpis.dataWarning
-                  : "Configure PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET in .env.local for live PayPal Sandbox."}
+                {kpis?.dataWarning ? (
+                  <>
+                    <strong>Sandbox Fallback Ledger:</strong> {kpis.dataWarning}
+                  </>
+                ) : (
+                  <>
+                    <strong>Demo Mode Active:</strong> Showing deterministic sample data from{" "}
+                    <code>.data/paysight-db.json</code>. Configure{" "}
+                    <code>PAYPAL_CLIENT_ID</code> and <code>PAYPAL_CLIENT_SECRET</code> in{" "}
+                    <code>.env.local</code> for live PayPal Sandbox.
+                  </>
+                )}
               </span>
             </div>
             <span className="hidden sm:inline font-mono text-[11px] bg-white text-[#C2410C] px-2 py-0.5 rounded border border-[#FED7AA]">
-              Demo Sample Data
+              {kpis?.dataWarning ? "Fallback Sample Data" : "Demo Sample Data"}
             </span>
           </div>
         )}

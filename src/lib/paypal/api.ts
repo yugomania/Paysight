@@ -6,6 +6,7 @@ import {
   getAccessToken,
   getPayPalBaseUrl,
   hasValidPayPalConfig,
+  invalidatePayPalAuth,
 } from "./client";
 import { extractPayPalSdkError, resolveSandboxProduct } from "./catalog";
 import {
@@ -160,7 +161,7 @@ export async function fetchTransactionsWithMeta(
     };
   }
 
-  const controller = getTransactionSearchController();
+  let controller = getTransactionSearchController();
   const endDate = new Date();
   const startDate = subDays(endDate, safeDays);
   const chunks = buildDateChunks(startDate, endDate, 30);
@@ -169,6 +170,7 @@ export async function fetchTransactionsWithMeta(
   let succeededChunks = 0;
   let isPartial = false;
   let lastErrorMsg = "";
+  let didRefreshAuth = false;
 
   for (const chunk of chunks) {
     let page = 1;
@@ -236,6 +238,21 @@ export async function fetchTransactionsWithMeta(
         }
       } catch (err) {
         const extracted = extractPayPalSdkError(err, "PayPal Transaction Search failed");
+        const statusCode =
+          err && typeof err === "object"
+            ? ((err as Record<string, unknown>).statusCode as number | undefined)
+            : undefined;
+        if (
+          !didRefreshAuth &&
+          (statusCode === 401 ||
+            statusCode === 403 ||
+            extracted.message.includes("NOT_AUTHORIZED"))
+        ) {
+          didRefreshAuth = true;
+          await invalidatePayPalAuth(true);
+          controller = getTransactionSearchController();
+          continue;
+        }
         lastErrorMsg = extracted.message;
         isPartial = true;
         console.warn(
@@ -552,7 +569,7 @@ export async function listInvoicesWithMeta(): Promise<InvoiceListResult> {
   }
 
   try {
-    const token = await getAccessToken();
+    let token = await getAccessToken();
     if (!token) {
       const sandboxOnly = stored.filter((i) => i.source === "paypal_sandbox");
       return sandboxOnly.length > 0
@@ -561,9 +578,19 @@ export async function listInvoicesWithMeta(): Promise<InvoiceListResult> {
     }
     const base = getPayPalBaseUrl();
 
-    const res = await fetch(`${base}/v2/invoicing/invoices?page_size=25&page=1`, {
+    let res = await fetch(`${base}/v2/invoicing/invoices?page_size=25&page=1`, {
       headers: { Authorization: `Bearer ${token}` },
     });
+
+    if (res.status === 401 || res.status === 403) {
+      await invalidatePayPalAuth(true);
+      token = await getAccessToken();
+      if (token) {
+        res = await fetch(`${base}/v2/invoicing/invoices?page_size=25&page=1`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
+    }
 
     if (!res.ok) {
       console.warn("[PayPal] listInvoices HTTP:", res.status);

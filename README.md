@@ -111,7 +111,7 @@ Open [http://localhost:3000](http://localhost:3000).
 ## Testing & Quality Gates
 
 ```bash
-npm test            # Runs all 8 node:test suites (40 isolated tests)
+npm test            # Runs all 8 node:test suites (41 isolated tests)
 npm run lint        # ESLint 9 checks
 npx tsc --noEmit    # Strict TypeScript check
 npm run build       # Production Next.js build (requires internet access for Google Fonts)

@@ -123,6 +123,64 @@ export async function getAccessToken(): Promise<string | null> {
   }
 }
 
+/**
+ * Clears in-memory PayPal SDK/OAuth caches and optionally terminates any active
+ * server-cached PayPal token so updated Developer Dashboard permissions take
+ * effect immediately without waiting up to 9 hours for token expiry.
+ */
+export async function invalidatePayPalAuth(forceRemoteTerminate = false): Promise<void> {
+  const cachedToken = _tokenCache?.token;
+  _tokenCache = null;
+  _client = null;
+  _clientKey = null;
+
+  if (!forceRemoteTerminate || !hasValidPayPalConfig()) {
+    return;
+  }
+
+  try {
+    const clientId = process.env.PAYPAL_CLIENT_ID!.trim();
+    const clientSecret = process.env.PAYPAL_CLIENT_SECRET!.trim();
+    const base = getPayPalBaseUrl();
+    const authHeader =
+      "Basic " + Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+
+    let tokenToTerminate = cachedToken;
+    if (!tokenToTerminate) {
+      const tokRes = await fetch(`${base}/v1/oauth2/token`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: authHeader,
+        },
+        body: "grant_type=client_credentials",
+      });
+      if (tokRes.ok) {
+        const tokData = await tokRes.json().catch(() => ({}));
+        if (typeof tokData?.access_token === "string") {
+          tokenToTerminate = tokData.access_token;
+        }
+      }
+    }
+
+    if (tokenToTerminate) {
+      await fetch(`${base}/v1/oauth2/token/terminate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: authHeader,
+        },
+        body: `token=${encodeURIComponent(tokenToTerminate)}&token_type_hint=ACCESS_TOKEN`,
+      });
+    }
+  } catch (err) {
+    console.warn(
+      "[PayPal] Token termination check failed cleanly:",
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
 export function getPayPalBaseUrl(): string {
   return process.env.PAYPAL_ENVIRONMENT === "live"
     ? "https://api-m.paypal.com"

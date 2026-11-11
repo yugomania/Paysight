@@ -23,7 +23,7 @@ PaySight (`paysight` `v0.1.0` / UI `PaySight v2.0`) is a Next.js 16 merchant int
 - `src/lib/db/index.ts` — `StoreRepository` interface, cross-process `.lock` file serialization, `randomUUID()` temp writes, `.corrupt.*` backup preservation, and deterministic demo seeds.
 - `src/lib/db/postgres.deferred.ts` & `db/migrations/001_init.sql` — Deferred PostgreSQL/Neon schema and `AsyncStoreRepository` contract ready to replace `.data/paysight-db.json` when multi-instance / durable cloud persistence is prioritized.
 - `src/lib/security/rate-limit.ts` — Sliding-window per-IP rate limiter protecting AI, Channel3 pricing, checkout, invoicing, and budget write endpoints.
-- `src/lib/paypal/client.ts` — PayPal SDK singleton (keyed by credentials/env), OAuth token cache, `hasValidPayPalConfig()`, fail-closed `verifyWebhookSignatureDetailed()`.
+- `src/lib/paypal/client.ts` — PayPal SDK singleton (keyed by credentials/env), OAuth token cache, `invalidatePayPalAuth()` (`POST /v1/oauth2/token/terminate` cache busting), `hasValidPayPalConfig()`, fail-closed `verifyWebhookSignatureDetailed()`.
 - `src/lib/paypal/catalog.ts` — Authoritative `SANDBOX_PRODUCTS` (`demo_10`, `sub_pro`, `intel_add`, `exp_pack`) and `extractPayPalSdkError()` (extracting SDK `result` and JSON `body` details cleanly).
 - `src/lib/paypal/api.ts` — `buildDateChunks()` (`<=30d`), paginated `fetchTransactionsWithMeta()`, currency-isolated `computeMerchantKPIs()`/`getMerchantKPIs()`, `getRevenueTimeSeries()`, PayPal Invoicing v2 CRUD (`listInvoicesWithMeta`, `prepareInvoiceProposal`, `createInvoice`, `sendDraftInvoice`, `cancelExistingInvoice`), `listDisputes()`, `captureServerSideOrder()`.
 - `src/lib/budget/service.ts` — `computeBudgetSummaryFromRecords()`, `getBudgetSummary()`, `recordMerchantExpense()`, `updateMonthlyBudgetTarget()`, `removeMerchantExpense()`.
@@ -42,6 +42,6 @@ PaySight (`paysight` `v0.1.0` / UI `PaySight v2.0`) is a Next.js 16 merchant int
 ## 5. Known Limitations & Next Priorities
 - **No user auth / multi-tenancy**: Single-merchant workspace without end-user login/RBAC; process-local rate limiting is in place, but add auth + external store before public multi-user production hosting.
 - **Ephemeral file persistence on Render Free**: Replace `jsonStoreRepository` with an async adapter matching `db/migrations/001_init.sql` (`src/lib/db/postgres.deferred.ts`) for durable multi-deploy cloud state.
-- **PayPal Sandbox App Permissions**: On the current local Sandbox app, Disputes (`v1/customer/disputes`) and Orders v2 (`v2/checkout/orders`) return live HTTP 200/201 responses, whereas Transaction Search (`/v1/reporting/transactions`) and Invoicing (`/v2/invoicing/invoices`) require enabling those feature checkboxes in PayPal Developer Dashboard (otherwise returning `403 NOT_AUTHORIZED` and falling back honestly).
+- **PayPal Sandbox App Permissions**: On the current local Sandbox app, **Orders v2**, **Customer Disputes v1**, **Transaction Search v1**, and **Invoicing v2** all return live `200`/`201` responses after terminating stale cached OAuth tokens; `invalidatePayPalAuth()` automatically recovers from `401`/`403` stale-token windows on any app where Dashboard permissions are toggled.
 - **Google Fonts build network requirement**: `next build` requires outbound network to `fonts.googleapis.com` for `Geist` / `Geist_Mono`.
 
