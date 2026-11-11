@@ -1,11 +1,13 @@
 // ─── PayPal Transaction Types ───────────────────────────────────────────────
 
+export type DataSourceKind = "paypal_sandbox" | "paypal_live" | "unconfigured";
+
 export interface Transaction {
   id: string;
   date: string; // ISO 8601 string (UTC)
-  amount: number; // Gross amount
-  fee?: number; // Provider fee
-  net?: number; // Net = amount - fee
+  amount: number; // Gross amount (positive magnitude)
+  fee?: number; // Provider fee (positive magnitude)
+  net?: number; // Net = amount - fee (negative for refunds)
   currency: string; // ISO 4217
   status: "COMPLETED" | "PENDING" | "FAILED" | "REFUNDED" | "DENIED";
   customerName: string;
@@ -15,7 +17,16 @@ export interface Transaction {
   paymentMethod: "paypal" | "card" | "paylater" | "venmo";
   invoiceId?: string;
   note?: string;
-  source?: "paypal_sandbox" | "demo_sample";
+  source?: DataSourceKind;
+}
+
+export interface CurrencyMetricsBreakdown {
+  gross: number;
+  fees: number;
+  net: number;
+  count: number;
+  refundCount: number;
+  refundAmount: number;
 }
 
 export interface MerchantKPIs {
@@ -27,17 +38,23 @@ export interface MerchantKPIs {
   averageOrderValueChange: number;
   disputeRate: number;
   disputeRateChange: number;
+  disputeCount?: number;
   currency: string;
-  // Advanced granular analytics
+  // Advanced granular analytics (strictly scoped to `currency`)
   grossVolume30d: number;
   netVolume30d: number;
   totalFees30d: number;
   refundCount30d: number;
   refundAmount30d: number;
+  reportingPeriod: string;
+  reportingDays: number;
   reportingTimezone: string;
-  source: "paypal_sandbox" | "demo_sample";
+  hasPreviousPeriodData: boolean;
+  isPartialData?: boolean;
+  dataWarning?: string;
+  source: DataSourceKind;
   lastUpdated: string;
-  currencyTotals: Record<string, { gross: number; net: number; count: number }>;
+  currencyTotals: Record<string, CurrencyMetricsBreakdown>;
 }
 
 export interface RevenueDataPoint {
@@ -45,6 +62,7 @@ export interface RevenueDataPoint {
   revenue: number;
   transactions: number;
   refunds?: number;
+  currency?: string;
 }
 
 export interface ProductRevenue {
@@ -67,8 +85,9 @@ export interface Invoice {
   dueDate: string;
   createdDate: string;
   items: InvoiceItem[];
+  note?: string;
   paymentUrl?: string;
-  source?: "paypal_sandbox" | "demo_sample";
+  source?: DataSourceKind;
 }
 
 export interface InvoiceItem {
@@ -117,30 +136,14 @@ export interface Dispute {
   updatedDate: string;
   buyerName: string;
   isLiveVerified?: boolean;
-  source?: "paypal_sandbox" | "demo_sample";
-}
-
-// ─── Payment Link Types ──────────────────────────────────────────────────────
-
-export interface PaymentLink {
-  id: string;
-  url: string;
-  name: string;
-  amount?: number;
-  currency: string;
-  createdDate: string;
-  status: "ACTIVE" | "INACTIVE";
-}
-
-export interface CreatePaymentLinkInput {
-  name: string;
-  amount?: number;
-  currency?: string;
-  description?: string;
-  allowCustomAmount?: boolean;
+  source?: DataSourceKind;
 }
 
 // ─── Channel3 / Competitor Pricing Types ────────────────────────────────────
+
+export type PricingDataSource =
+  | "channel3_live"
+  | "channel3_unavailable";
 
 export interface CompetitorProduct {
   productName: string;
@@ -155,22 +158,96 @@ export interface CompetitorProduct {
   condition?: "new" | "refurbished" | "used";
   retrievalTime?: string;
   isExactMatch?: boolean;
+  matchConfidence?: "exact" | "approximate";
 }
 
 export interface PricingComparison {
   yourProductName: string;
   yourPrice: number;
   yourSku?: string;
+  currency: string;
   marketMinPrice: number;
   marketMaxPrice: number;
   marketAvgPrice: number;
+  priceDifference: number;
+  priceDifferencePct: number | null;
   competitorCount: number;
   pricePosition: "competitive" | "high" | "low" | "unknown";
   competitors: CompetitorProduct[];
   exactMatchesCount?: number;
   approximateMatchesCount?: number;
   comparisonTimestamp?: string;
+  source: PricingDataSource;
+  fromCache?: boolean;
   disclaimer?: string;
+}
+
+// ─── Merchant Budget Intelligence Types ─────────────────────────────────────
+
+export type ExpenseCategory =
+  | "inventory"
+  | "marketing"
+  | "software"
+  | "shipping"
+  | "operations"
+  | "taxes"
+  | "other";
+
+export interface MerchantExpense {
+  id: string;
+  date: string; // YYYY-MM-DD
+  category: ExpenseCategory;
+  description: string;
+  amount: number;
+  currency: string;
+  recurring?: boolean;
+  createdAt: string;
+}
+
+export interface MonthlyBudgetTarget {
+  month: string; // YYYY-MM
+  currency: string;
+  salesTarget: number;
+  expenseBudget: number;
+  updatedAt: string;
+}
+
+export interface BudgetCategoryBreakdown {
+  category: ExpenseCategory;
+  total: number;
+  sharePct: number;
+  count: number;
+}
+
+export interface BudgetSummary {
+  month: string; // YYYY-MM
+  currency: string;
+  salesTarget: number;
+  expenseBudget: number;
+  actualGrossSales: number;
+  completedOrderCount: number;
+  refunds: number;
+  refundCount: number;
+  paypalFees: number;
+  netPayPalProceeds: number;
+  manualExpensesTotal: number;
+  expensesByCategory: BudgetCategoryBreakdown[];
+  estimatedOperatingCashFlow: number; // netPayPalProceeds - manualExpensesTotal (clearly distinct from non-PayPal sales/profit)
+  targetProgressPct: number | null;
+  salesVariance: number;
+  expenseBudgetVariance: number;
+  expenseUtilizationPct: number | null;
+  status: "ON_TRACK" | "BEHIND_TARGET" | "OVER_BUDGET" | "AT_RISK" | "UNCONFIGURED";
+  alerts: string[];
+  dataSource: DataSourceKind;
+  previousMonth: {
+    month: string;
+    actualGrossSales: number;
+    netPayPalProceeds: number;
+    manualExpensesTotal: number;
+    grossSalesChangePct: number | null;
+  };
+  calculationNotes: string[];
 }
 
 // ─── AI Chat Types ───────────────────────────────────────────────────────────

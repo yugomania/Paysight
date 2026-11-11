@@ -11,24 +11,18 @@
   },
   "dependencies": {
     "@ai-sdk/google": "^1.2.22",
-    "@ai-sdk/openai": "^4.0.96",
-    "@ai-sdk/react": "^4.0.147",
-    "@paypal/agent-toolkit": "^1.11.0",
     "@paypal/paypal-server-sdk": "^2.5.0",
     "@paypal/react-paypal-js": "^10.6.0",
     "ag-grid-community": "^36.2.0",
-    "ag-grid-enterprise": "^36.2.0",
     "ag-grid-react": "^36.2.0",
     "ai": "^4.3.19",
-    "axios": "^1.20.0",
     "date-fns": "^4.4.0",
     "lucide-react": "^1.59.0",
     "next": "16.4.2",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "recharts": "^3.10.1",
-    "zod": "^3.25.76",
-    "zustand": "^5.0.15"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",

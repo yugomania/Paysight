@@ -1,152 +1,273 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { NextRequest } from "next/server";
 import { POST as webhookHandler } from "../src/app/api/webhooks/paypal/route";
-import { captureServerSideOrder, listTransactions } from "../src/lib/paypal/api";
-import { isEventProcessed, getStoredTransactions, saveTransaction } from "../src/lib/db";
-import type { Transaction } from "../src/types";
+import {
+  captureServerSideOrder,
+  listInvoicesWithMeta,
+} from "../src/lib/paypal/api";
+import { invalidatePayPalAuth } from "../src/lib/paypal/client";
+import {
+  getStoredInvoiceById,
+  getStoredTransactions,
+  isEventProcessed,
+  saveInvoice,
+  saveTransaction,
+} from "../src/lib/db";
 
-test("Payment State, Reconciliation & Webhook Processing", async (t) => {
-  await t.test("captureServerSideOrder validates expected amount and stores transaction", async () => {
-    const orderId = `TEST-ORDER-${Date.now()}`;
-    const captureResult = await captureServerSideOrder(orderId, "sub_pro");
+test("Payment State, Reconciliation & Fail-Closed Webhook Processing", async (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "paysight-wh-"));
+  const prevDb = process.env.PAYSIGHT_DB_PATH;
+  const prevCid = process.env.PAYPAL_CLIENT_ID;
+  const prevSec = process.env.PAYPAL_CLIENT_SECRET;
+  const prevWh = process.env.PAYPAL_WEBHOOK_ID;
+  process.env.PAYSIGHT_DB_PATH = path.join(tmpDir, "db.json");
 
-    assert.equal(captureResult.success, true);
-    assert.ok(captureResult.transaction);
-    assert.equal(captureResult.transaction.amount, 49.00);
-    assert.equal(captureResult.transaction.currency, "USD");
-    assert.equal(captureResult.transaction.status, "COMPLETED");
-
-    // Check that it's in stored transactions
-    const stored = getStoredTransactions();
-    const found = stored.find((t) => t.id === captureResult.transaction?.id);
-    assert.ok(found, "Transaction must be durably stored");
+  t.after(() => {
+    if (prevDb === undefined) delete process.env.PAYSIGHT_DB_PATH;
+    else process.env.PAYSIGHT_DB_PATH = prevDb;
+    if (prevCid === undefined) delete process.env.PAYPAL_CLIENT_ID;
+    else process.env.PAYPAL_CLIENT_ID = prevCid;
+    if (prevSec === undefined) delete process.env.PAYPAL_CLIENT_SECRET;
+    else process.env.PAYPAL_CLIENT_SECRET = prevSec;
+    if (prevWh === undefined) delete process.env.PAYPAL_WEBHOOK_ID;
+    else process.env.PAYPAL_WEBHOOK_ID = prevWh;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  await t.test("reconciliation prevents double-counting captures when fetched or merged", async () => {
-    const uniqueId = `RECON-TX-${Date.now()}`;
-    const initialTx: Transaction = {
-      id: uniqueId,
+  await t.test("captureServerSideOrder rejects invalid SKU and requires live PayPal credentials", async () => {
+    delete process.env.PAYPAL_CLIENT_ID;
+    delete process.env.PAYPAL_CLIENT_SECRET;
+
+    const bad = await captureServerSideOrder("ORD-1", "unknown_sku");
+    assert.equal(bad.success, false);
+
+    const missingCreds = await captureServerSideOrder(`TEST-ORDER-${Date.now()}`, "sub_pro");
+    assert.equal(missingCreds.success, false);
+    assert.match(missingCreds.error ?? "", /PayPal Sandbox credentials/);
+  });
+
+  await t.test("deduplication prevents double counting across repeated saves", async () => {
+    const id = `RECON-TX-${Date.now()}`;
+    const tx = {
+      id,
       date: new Date().toISOString(),
-      amount: 120.00,
+      amount: 120.0,
       fee: 3.78,
       net: 116.22,
       currency: "USD",
-      status: "COMPLETED",
-      customerName: "Reconciliation Test Buyer",
+      status: "COMPLETED" as const,
+      customerName: "Recon Buyer",
       customerEmail: "recon@test.dev",
-      productName: "Reconciled Service",
-      paymentMethod: "paypal",
-      source: "paypal_sandbox",
+      productName: "Service",
+      paymentMethod: "paypal" as const,
+      source: "paypal_sandbox" as const,
     };
 
-    // Save once
-    saveTransaction(initialTx);
-
-    // Fetch list
-    const list1 = await listTransactions(30);
-    const count1 = list1.filter((t) => t.id === uniqueId).length;
-    assert.equal(count1, 1, "Should appear exactly once");
-
-    // Simulate repeating or re-syncing the same transaction from search
-    saveTransaction(initialTx);
-    const list2 = await listTransactions(30);
-    const count2 = list2.filter((t) => t.id === uniqueId).length;
-    assert.equal(count2, 1, "Deduplication must prevent double-counting of the same transaction");
+    saveTransaction(tx);
+    saveTransaction(tx);
+    const list = getStoredTransactions();
+    assert.equal(list.filter((item) => item.id === id).length, 1);
   });
 
-  await t.test("webhook rejects invalid transmission signatures with 401", async () => {
-    const eventPayload = {
-      id: `WH-TEST-${Date.now()}`,
-      event_type: "PAYMENT.CAPTURE.COMPLETED",
-      resource: {
-        id: "CAP-SIG-TEST",
-        amount: { value: "25.00", currency_code: "USD" },
-      },
-    };
+  await t.test("webhook fails closed (503) when verification config is missing", async () => {
+    delete process.env.PAYPAL_CLIENT_ID;
+    delete process.env.PAYPAL_CLIENT_SECRET;
+    delete process.env.PAYPAL_WEBHOOK_ID;
 
     const req = new NextRequest("http://localhost:3000/api/webhooks/paypal", {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "WH-MISSING-CFG",
+        event_type: "PAYMENT.CAPTURE.COMPLETED",
+        resource: { id: "CAP-1", amount: { value: "25.00", currency_code: "USD" } },
+      }),
+    });
+    const res = await webhookHandler(req);
+    assert.equal(res.status, 503);
+  });
+
+  await t.test("webhook rejects missing headers or invalid signatures with 401", async () => {
+    process.env.PAYPAL_CLIENT_ID = "sandbox-client-id-more-than-twenty-chars";
+    process.env.PAYPAL_CLIENT_SECRET = "sandbox-client-secret-value";
+    process.env.PAYPAL_WEBHOOK_ID = "WH-ID-TEST-123";
+
+    const missingHdrReq = new NextRequest("http://localhost:3000/api/webhooks/paypal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "WH-NO-HDR", event_type: "PAYMENT.CAPTURE.COMPLETED" }),
+    });
+    const r1 = await webhookHandler(missingHdrReq);
+    assert.equal(r1.status, 401);
+
+    const invalidSigReq = new NextRequest("http://localhost:3000/api/webhooks/paypal", {
+      method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "paypal-transmission-id": "transmission-123",
+        "paypal-transmission-id": "tr-1",
         "paypal-transmission-time": new Date().toISOString(),
-        "paypal-cert-url": "https://api.paypal.com/cert.pem",
+        "paypal-cert-url": "https://api.sandbox.paypal.com/cert.pem",
         "paypal-auth-algo": "SHA256withRSA",
-        "paypal-transmission-sig": "invalid_signature_data", // explicitly invalid
+        "paypal-transmission-sig": "invalid_signature",
       },
-      body: JSON.stringify(eventPayload),
+      body: JSON.stringify({ id: "WH-BAD-SIG", event_type: "PAYMENT.CAPTURE.COMPLETED" }),
     });
-
-    const res = await webhookHandler(req);
-    assert.equal(res.status, 401, "Invalid webhook signature must return 401");
+    const r2 = await webhookHandler(invalidSigReq);
+    assert.equal(r2.status, 401);
   });
 
-  await t.test("webhook processes valid event and skips duplicates idempotently", async () => {
-    const eventId = `WH-IDEMP-${Date.now()}`;
-    const eventPayload = {
-      id: eventId,
-      event_type: "PAYMENT.CAPTURE.COMPLETED",
-      resource: {
-        id: `CAP-WH-${Date.now()}`,
-        amount: { value: "85.00", currency_code: "USD" },
-        create_time: new Date().toISOString(),
-        seller_receivable_breakdown: {
-          paypal_fee: { value: "2.77" },
-        },
-      },
+  await t.test("webhook processes verified event, deduplicates repeats, and preserves invoice line items", async () => {
+    const inv = {
+      id: "INV2-WH-101",
+      invoiceNumber: "INV-9001",
+      recipientName: "Acme Global",
+      recipientEmail: "ap@acme.dev",
+      amount: 500.0,
+      currency: "USD",
+      status: "DRAFT" as const,
+      dueDate: "2026-12-01",
+      createdDate: new Date().toISOString(),
+      items: [{ name: "Annual Intelligence Plan", quantity: 2, unitAmount: 250.0 }],
+      source: "paypal_sandbox" as const,
+    };
+    saveInvoice(inv);
+
+    process.env.PAYPAL_CLIENT_ID = "sandbox-client-id-more-than-twenty-chars-2";
+    process.env.PAYPAL_CLIENT_SECRET = "sandbox-client-secret-value-2";
+    process.env.PAYPAL_WEBHOOK_ID = "WH-ID-TEST-123";
+
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      const target = String(url);
+      if (target.includes("/v1/oauth2/token")) {
+        return new Response(JSON.stringify({ access_token: "mock-tok", expires_in: 3600 }), {
+          status: 200,
+        });
+      }
+      if (target.includes("/v1/notifications/verify-webhook-signature")) {
+        return new Response(JSON.stringify({ verification_status: "SUCCESS" }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch ${target}`);
     };
 
-    const makeReq = () =>
-      new NextRequest("http://localhost:3000/api/webhooks/paypal", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "paypal-transmission-id": "valid-id",
-          "paypal-cert-url": "https://api.sandbox.paypal.com/cert.pem",
-          "paypal-transmission-sig": "valid_mock_sig",
-        },
-        body: JSON.stringify(eventPayload),
-      });
-
-    // First call: should process
-    const res1 = await webhookHandler(makeReq());
-    assert.equal(res1.status, 200);
-    const body1 = await res1.json();
-    assert.equal(body1.received, true);
-    assert.equal(body1.eventId, eventId);
-    assert.ok(isEventProcessed(eventId), "Event must be recorded as processed");
-
-    // Second call with same event ID: must be skipped as duplicate
-    const res2 = await webhookHandler(makeReq());
-    assert.equal(res2.status, 200);
-    const body2 = await res2.json();
-    assert.equal(body2.status, "duplicate_skipped", "Duplicate webhook event must be skipped");
-  });
-
-  await t.test("webhook handles refund events accurately", async () => {
-    const refundEventId = `WH-REF-${Date.now()}`;
-    const refundPayload = {
-      id: refundEventId,
-      event_type: "PAYMENT.CAPTURE.REFUNDED",
-      resource: {
-        id: `REF-WH-${Date.now()}`,
-        amount: { value: "35.00", currency_code: "USD" },
-        create_time: new Date().toISOString(),
-      },
-    };
-
-    const req = new NextRequest("http://localhost:3000/api/webhooks/paypal", {
-      method: "POST",
-      headers: {
+    try {
+      const signedHeaders = {
         "Content-Type": "application/json",
-      },
-      body: JSON.stringify(refundPayload),
-    });
+        "paypal-transmission-id": "tr-valid-1",
+        "paypal-transmission-time": new Date().toISOString(),
+        "paypal-cert-url": "https://api.sandbox.paypal.com/cert.pem",
+        "paypal-auth-algo": "SHA256withRSA",
+        "paypal-transmission-sig": "valid-rsa-signature",
+      };
 
-    const res = await webhookHandler(req);
-    assert.equal(res.status, 200);
-    const body = await res.json();
-    assert.equal(body.eventType, "PAYMENT.CAPTURE.REFUNDED");
+      const paidEventId = `WH-INV-PAID-${Date.now()}`;
+      const paidPayload = {
+        id: paidEventId,
+        event_type: "INVOICING.INVOICE.PAID",
+        resource: {
+          id: inv.id,
+          amount: { value: "500.00" },
+        },
+      };
+
+      const r1 = await webhookHandler(
+        new NextRequest("http://localhost:3000/api/webhooks/paypal", {
+          method: "POST",
+          headers: signedHeaders,
+          body: JSON.stringify(paidPayload),
+        })
+      );
+      assert.equal(r1.status, 200);
+      assert.ok(isEventProcessed(paidEventId));
+
+      const updatedInv = getStoredInvoiceById(inv.id);
+      assert.equal(updatedInv?.status, "PAID");
+      assert.equal(updatedInv?.items.length, 1, "Must preserve existing line items");
+      assert.equal(updatedInv?.items[0].name, "Annual Intelligence Plan");
+      assert.equal(updatedInv?.recipientEmail, "ap@acme.dev");
+
+      // Repeat identical event -> skipped idempotently
+      const r2 = await webhookHandler(
+        new NextRequest("http://localhost:3000/api/webhooks/paypal", {
+          method: "POST",
+          headers: signedHeaders,
+          body: JSON.stringify(paidPayload),
+        })
+      );
+      assert.equal(r2.status, 200);
+      const dupBody = await r2.json();
+      assert.equal(dupBody.status, "duplicate_skipped");
+
+      // Late SENT webhook must not downgrade PAID status
+      const lateSent = {
+        id: `WH-INV-SENT-${Date.now()}`,
+        event_type: "INVOICING.INVOICE.SENT",
+        resource: { id: inv.id },
+      };
+      const r3 = await webhookHandler(
+        new NextRequest("http://localhost:3000/api/webhooks/paypal", {
+          method: "POST",
+          headers: signedHeaders,
+          body: JSON.stringify(lateSent),
+        })
+      );
+      assert.equal(r3.status, 200);
+      assert.equal(getStoredInvoiceById(inv.id)?.status, "PAID");
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await t.test("listInvoicesWithMeta auto-terminates stale OAuth token on 403 and recovers cleanly", async () => {
+    process.env.PAYPAL_CLIENT_ID = "AX_TEST_CLIENT_ID_LONG_ENOUGH_FOR_VALIDATION";
+    process.env.PAYPAL_CLIENT_SECRET = "EX_TEST_SECRET_LONG_ENOUGH_FOR_VALIDATION";
+    await invalidatePayPalAuth(false);
+
+    const origFetch = globalThis.fetch;
+    let tokenCounter = 0;
+    let terminateCalled = false;
+    let invoiceCalls = 0;
+
+    try {
+      globalThis.fetch = async (url) => {
+        const u = String(url);
+        if (u.endsWith("/v1/oauth2/token")) {
+          tokenCounter += 1;
+          return new Response(
+            JSON.stringify({ access_token: `tok_${tokenCounter}`, expires_in: 32400 }),
+            { status: 200 }
+          );
+        }
+        if (u.endsWith("/v1/oauth2/token/terminate")) {
+          terminateCalled = true;
+          return new Response("", { status: 200 });
+        }
+        if (u.includes("/v2/invoicing/invoices")) {
+          invoiceCalls += 1;
+          if (invoiceCalls === 1) {
+            return new Response(
+              JSON.stringify({ name: "NOT_AUTHORIZED" }),
+              { status: 403 }
+            );
+          }
+          return new Response(JSON.stringify({ items: [] }), { status: 200 });
+        }
+        throw new Error(`Unexpected fetch URL: ${u}`);
+      };
+
+      const res = await listInvoicesWithMeta();
+      assert.equal(terminateCalled, true, "Must terminate stale OAuth token on 403");
+      assert.equal(tokenCounter, 2, "Must re-fetch fresh OAuth token");
+      assert.equal(invoiceCalls, 2);
+      assert.equal(res.isLive, true);
+      assert.equal(res.dataSource, "paypal_sandbox");
+    } finally {
+      globalThis.fetch = origFetch;
+      await invalidatePayPalAuth(false);
+    }
   });
 });

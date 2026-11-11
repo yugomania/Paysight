@@ -1,99 +1,190 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { prepareInvoiceProposal, createInvoice } from "../src/lib/paypal/api";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { NextRequest } from "next/server";
+import { POST as invoicesPost } from "../src/app/api/invoices/route";
+import {
+  cancelExistingInvoice,
+  createInvoice,
+  prepareInvoiceProposal,
+  sendDraftInvoice,
+} from "../src/lib/paypal/api";
+import { invalidatePayPalAuth } from "../src/lib/paypal/client";
 import type { CreateInvoiceInput } from "../src/types";
 
-test("PayPal Invoicing: validation, proposal preview, confirmation binding, and idempotency", async (t) => {
+test("PayPal Invoicing: validation, preview binding, lifecycle, and concurrency lock", async (t) => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "paysight-inv-"));
+  const prevDb = process.env.PAYSIGHT_DB_PATH;
+  const prevCid = process.env.PAYPAL_CLIENT_ID;
+  const prevSec = process.env.PAYPAL_CLIENT_SECRET;
+  const origFetch = globalThis.fetch;
+  process.env.PAYSIGHT_DB_PATH = path.join(tmpDir, "db.json");
+  process.env.PAYPAL_CLIENT_ID = "AX_INV_TEST_CLIENT_ID_LONG_ENOUGH_FOR_VALIDATION";
+  process.env.PAYPAL_CLIENT_SECRET = "EX_INV_TEST_SECRET_LONG_ENOUGH_FOR_VALIDATION";
+
+  t.after(async () => {
+    globalThis.fetch = origFetch;
+    await invalidatePayPalAuth(false);
+    if (prevDb === undefined) delete process.env.PAYSIGHT_DB_PATH;
+    else process.env.PAYSIGHT_DB_PATH = prevDb;
+    if (prevCid === undefined) delete process.env.PAYPAL_CLIENT_ID;
+    else process.env.PAYPAL_CLIENT_ID = prevCid;
+    if (prevSec === undefined) delete process.env.PAYPAL_CLIENT_SECRET;
+    else process.env.PAYPAL_CLIENT_SECRET = prevSec;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
   await t.test("identifies missing or invalid invoice fields", () => {
-    const incompleteInput: Partial<CreateInvoiceInput> = {
+    const proposal = prepareInvoiceProposal({
       recipientName: "Test Buyer",
-      // missing recipientEmail
-      items: [], // empty items
-    };
-
-    const proposal = prepareInvoiceProposal(incompleteInput);
-    assert.equal(proposal.isValid, false, "Proposal must be invalid when missing fields");
-    assert.ok(proposal.missingFields.includes("recipientEmail"), "Should flag missing recipientEmail");
-    assert.ok(proposal.missingFields.includes("items"), "Should flag missing items");
+      items: [],
+    });
+    assert.equal(proposal.isValid, false);
+    assert.ok(proposal.missingFields.includes("recipientEmail"));
+    assert.ok(proposal.missingFields.includes("items"));
   });
 
-  await t.test("generates valid proposal with exact preview and confirmation token", () => {
-    const validInput: CreateInvoiceInput = {
-      recipientName: "Jane Doe",
-      recipientEmail: "jane.doe@example.com",
-      items: [
-        { name: "Consulting Hour", quantity: 2, unitAmount: 150.00 },
-        { name: "Setup Fee", quantity: 1, unitAmount: 50.00 },
-      ],
-      currency: "USD",
-      note: "Q4 Consulting Work",
-    };
-
-    const proposal = prepareInvoiceProposal(validInput);
-    assert.equal(proposal.isValid, true);
-    assert.equal(proposal.totalAmount, 350.00);
-    assert.equal(proposal.missingFields.length, 0);
-    assert.ok(proposal.confirmationToken, "Must produce confirmationToken");
-    assert.equal(proposal.status, "PROPOSAL_PENDING_CONFIRMATION");
-  });
-
-  await t.test("binds confirmation to exact details; rejects creation if details were modified after preview", async () => {
-    const originalInput: CreateInvoiceInput = {
+  await t.test("binds confirmationToken and rejects edits after preview", async () => {
+    const original: CreateInvoiceInput = {
       recipientName: "Acme Corp",
       recipientEmail: "billing@acme.com",
-      items: [{ name: "Widget A", quantity: 1, unitAmount: 100.00 }],
+      items: [{ name: "Widget A", quantity: 1, unitAmount: 100.0 }],
       currency: "USD",
     };
 
-    const proposal = prepareInvoiceProposal(originalInput);
-    const validToken = proposal.confirmationToken;
-
-    // Simulate merchant modifying details (changing unit amount from $100 to $150) without re-confirming
-    const modifiedInput: CreateInvoiceInput = {
-      ...originalInput,
-      items: [{ name: "Widget A", quantity: 1, unitAmount: 150.00 }],
-      confirmationToken: validToken, // stale token
-    };
+    const proposal = prepareInvoiceProposal(original);
+    assert.equal(proposal.isValid, true);
+    assert.equal(proposal.totalAmount, 100.0);
 
     await assert.rejects(
-      async () => {
-        await createInvoice(modifiedInput);
-      },
-      {
-        message: /Confirmation token mismatch: invoice details were modified after preview/,
-      },
-      "Must reject creation when details were altered after confirmation token was issued"
+      () =>
+        createInvoice({
+          ...original,
+          items: [{ name: "Widget A", quantity: 1, unitAmount: 150.0 }],
+          confirmationToken: proposal.confirmationToken,
+        }),
+      /Confirmation token mismatch/
     );
   });
 
-  await t.test("creates invoice with DRAFT status by default; never marks as SENT without explicit authorization", async () => {
-    const draftInput: CreateInvoiceInput = {
-      recipientName: "Default Draft Customer",
-      recipientEmail: `draft-${Date.now()}@test.dev`,
-      items: [{ name: "Draft Product", quantity: 1, unitAmount: 75.00 }],
-      autoSend: false,
-    };
+  await t.test("rejects autoSend without confirmationToken and rejects HTTP POST without token", async () => {
+    await assert.rejects(
+      () =>
+        createInvoice({
+          recipientName: "Unconfirmed Buyer",
+          recipientEmail: "buyer@test.dev",
+          items: [{ name: "Service", quantity: 1, unitAmount: 50.0 }],
+          autoSend: true,
+        }),
+      /confirmation token is required/
+    );
 
-    const invoice = await createInvoice(draftInput);
-    assert.equal(invoice.status, "DRAFT", "Must default to DRAFT status");
-    assert.ok(invoice.id, "Must return an invoice ID");
-    assert.equal(invoice.amount, 75.00);
+    const req = new NextRequest("http://localhost:3000/api/invoices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        recipientName: "Direct POST",
+        recipientEmail: "post@test.dev",
+        items: [{ name: "Service", quantity: 1, unitAmount: 50 }],
+      }),
+    });
+    const res = await invoicesPost(req);
+    assert.equal(res.status, 400);
   });
 
-  await t.test("rejects concurrent duplicate invoice creation requests (in-flight idempotency)", async () => {
-    const email = `concurrent-${Date.now()}@test.dev`;
-    const input: CreateInvoiceInput = {
-      recipientName: "Concurrent Test",
-      recipientEmail: email,
-      items: [{ name: "Duplicate Guard Test", quantity: 1, unitAmount: 199.00 }],
+  await t.test("creates DRAFT by default, supports sendDraftInvoice and cancelExistingInvoice", async () => {
+    globalThis.fetch = async (url, init) => {
+      const u = String(url);
+      if (u.endsWith("/v1/oauth2/token")) {
+        return new Response(JSON.stringify({ access_token: "tok-inv-test", expires_in: 3600 }), {
+          status: 200,
+        });
+      }
+      if (u.endsWith("/v2/invoicing/invoices") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({ id: "INV2-LIVE-101", detail: { invoice_number: "1001" } }),
+          { status: 201 }
+        );
+      }
+      if (u.endsWith("/v2/invoicing/invoices/INV2-LIVE-101/send")) {
+        return new Response(
+          JSON.stringify({ href: "https://sandbox.paypal.com/invoice/p/#INV2-LIVE-101" }),
+          { status: 200 }
+        );
+      }
+      if (u.endsWith("/v2/invoicing/invoices/INV2-LIVE-101/cancel")) {
+        return new Response(null, { status: 204 });
+      }
+      if (u.endsWith("/v2/invoicing/invoices/INV2-LIVE-101") && init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected URL: ${u}`);
     };
 
-    // Trigger two creations in parallel with identical lockKey
-    const p1 = createInvoice(input);
-    const p2 = createInvoice(input);
+    const invoice = await createInvoice({
+      recipientName: "Lifecycle Customer",
+      recipientEmail: "life@test.dev",
+      items: [{ name: "Draft Product", quantity: 1, unitAmount: 75.0 }],
+      autoSend: false,
+    });
+    assert.equal(invoice.status, "DRAFT");
+    assert.equal(invoice.source, "paypal_sandbox");
 
-    const results = await Promise.allSettled([p1, p2]);
-    // At least one should succeed and subsequent concurrent calls rejected or handled atomically
-    assert.ok(results.some((r) => r.status === "fulfilled"), "At least one call should succeed");
+    const sent = await sendDraftInvoice(invoice.id);
+    assert.equal(sent.status, "SENT");
+    assert.ok(sent.paymentUrl?.includes("INV2-LIVE-101"));
+
+    const cancelled = await cancelExistingInvoice(invoice.id);
+    assert.equal(cancelled.status, "CANCELLED");
+  });
+
+  await t.test("fails closed when PayPal credentials are missing", async () => {
+    const savedCid = process.env.PAYPAL_CLIENT_ID;
+    delete process.env.PAYPAL_CLIENT_ID;
+    try {
+      await assert.rejects(
+        () =>
+          createInvoice({
+            recipientName: "No Creds Buyer",
+            recipientEmail: "nocreds@test.dev",
+            items: [{ name: "Service", quantity: 1, unitAmount: 50.0 }],
+          }),
+        /PayPal Sandbox credentials/
+      );
+    } finally {
+      process.env.PAYPAL_CLIENT_ID = savedCid;
+    }
+  });
+
+  await t.test("rejects concurrent duplicate invoice creation requests", async () => {
+    globalThis.fetch = async (url, init) => {
+      const u = String(url);
+      if (u.endsWith("/v1/oauth2/token")) {
+        return new Response(JSON.stringify({ access_token: "tok-inv-test", expires_in: 3600 }), {
+          status: 200,
+        });
+      }
+      if (u.endsWith("/v2/invoicing/invoices") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({ id: "INV2-CONCURRENT-1", detail: { invoice_number: "2001" } }),
+          { status: 201 }
+        );
+      }
+      throw new Error(`Unexpected URL: ${u}`);
+    };
+
+    const input: CreateInvoiceInput = {
+      recipientName: "Concurrent Test",
+      recipientEmail: "concurrent@test.dev",
+      items: [{ name: "Duplicate Guard Test", quantity: 1, unitAmount: 199.0 }],
+    };
+
+    const [r1, r2] = await Promise.allSettled([createInvoice(input), createInvoice(input)]);
+    const fulfilled = [r1, r2].filter((r) => r.status === "fulfilled").length;
+    const rejected = [r1, r2].filter((r) => r.status === "rejected").length;
+    assert.equal(fulfilled, 1);
+    assert.equal(rejected, 1);
   });
 });
