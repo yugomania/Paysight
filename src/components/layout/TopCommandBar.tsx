@@ -3,7 +3,7 @@
 import type { RefObject } from "react";
 import {
   Search,
-  Sparkles,
+  MessageSquare,
   Plus,
   RotateCw,
   GitFork,
@@ -99,7 +99,7 @@ export function TopCommandBar({
           }`}
           aria-label={isChatOpen ? "Close AI Assistant" : "Open AI Assistant"}
         >
-          <Sparkles className={`w-3.5 h-3.5 ${isChatOpen ? "text-[#FED7AA]" : "text-[#C2410C]"}`} />
+          <MessageSquare className={`w-3.5 h-3.5 ${isChatOpen ? "text-[#FED7AA]" : "text-[#C2410C]"}`} />
           <span>Ask PaySight</span>
           <span className="hidden sm:inline-flex text-[10px] font-mono px-1 rounded bg-white text-[#C2410C] border border-[#FED7AA]">
             AI

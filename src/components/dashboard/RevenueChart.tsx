@@ -11,7 +11,7 @@ import {
 } from "recharts";
 import type { RevenueDataPoint, DateRangeOption } from "@/types";
 import { format, parseISO } from "date-fns";
-import { TrendingUp, TrendingDown, Minus, Sparkles } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, MessageSquare } from "lucide-react";
 import { formatMoney } from "./StatusBadge";
 
 interface RevenueChartProps {
@@ -119,7 +119,7 @@ export function RevenueChart({
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-[#C2410C] bg-[#FFF3EB] hover:bg-[#FFE7D6] border border-[#FED7AA] transition-colors shadow-xs"
               title="Open PaySight Copilot to explain this settlement trend"
             >
-              <Sparkles className="w-3.5 h-3.5 text-[#C2410C]" />
+              <MessageSquare className="w-3.5 h-3.5 text-[#C2410C]" />
               <span>Explain this trend</span>
             </button>
           )}

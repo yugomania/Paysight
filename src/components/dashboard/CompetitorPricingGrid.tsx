@@ -13,7 +13,7 @@ import {
   Plus,
   ExternalLink,
   X,
-  Sparkles,
+  MessageSquare,
   AlertCircle,
 } from "lucide-react";
 import { ensureAgGridRegistered, formatMoney } from "./StatusBadge";
@@ -271,7 +271,7 @@ export function CompetitorPricingGrid({
               onClick={onExplainComparison}
               className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-[#C2410C] bg-[#FFF3EB] hover:bg-[#FFE7D6] border border-[#FED7AA] transition-colors shadow-xs"
             >
-              <Sparkles className="w-3.5 h-3.5 text-[#C2410C]" />
+              <MessageSquare className="w-3.5 h-3.5 text-[#C2410C]" />
               <span>Explain comparison with AI</span>
             </button>
           )}

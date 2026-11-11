@@ -7,7 +7,7 @@ import {
   DollarSign,
   Plus,
   Receipt,
-  Sparkles,
+  MessageSquare,
   Target,
   Trash2,
   TrendingUp,
@@ -280,7 +280,7 @@ export function BudgetIntelligencePanel({
               }
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FFF3EB] hover:bg-[#FFE7D6] text-[#C2410C] border border-[#FED7AA] font-semibold transition-colors"
             >
-              <Sparkles className="w-3.5 h-3.5" />
+              <MessageSquare className="w-3.5 h-3.5" />
               <span>Analyze Budget with AI</span>
             </button>
           )}

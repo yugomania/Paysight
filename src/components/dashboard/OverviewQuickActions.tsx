@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, Radar, Receipt, Sparkles } from "lucide-react";
+import { MessageSquare, Plus, Radar, Receipt } from "lucide-react";
 
 interface OverviewQuickActionsProps {
   onOpenInvoiceModal: () => void;
@@ -40,7 +40,7 @@ export function OverviewQuickActions({
     {
       title: "Ask PaySight Copilot",
       description: "Ask questions about payment volume, trends, or draft invoices",
-      icon: Sparkles,
+      icon: MessageSquare,
       onClick: onOpenChat,
       isPrimary: false,
     },

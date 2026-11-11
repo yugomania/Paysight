@@ -5,7 +5,7 @@ import { AgGridReact } from "ag-grid-react";
 import type { ColDef, GridReadyEvent, ICellRendererParams, RowClickedEvent } from "ag-grid-community";
 import type { Transaction } from "@/types";
 import { format, parseISO } from "date-fns";
-import { Download, Search, Sparkles, X } from "lucide-react";
+import { Download, MessageSquare, Search, X } from "lucide-react";
 import {
   ensureAgGridRegistered,
   formatMoney,
@@ -276,7 +276,7 @@ export function TransactionGrid({
               title="Summarise transactions with PaySight Copilot"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FFF3EB] hover:bg-[#FFE7D6] text-[#C2410C] border border-[#FED7AA] text-xs font-semibold shadow-xs transition-colors"
             >
-              <Sparkles className="w-3.5 h-3.5 text-[#C2410C]" />
+              <MessageSquare className="w-3.5 h-3.5 text-[#C2410C]" />
               <span className="hidden sm:inline">Summarise with AI</span>
             </button>
           )}

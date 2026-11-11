@@ -4,10 +4,8 @@ import { useChat } from "ai/react";
 import { useRef, useEffect, type ReactNode } from "react";
 import {
   Send,
-  Bot,
   User,
   Loader2,
-  Sparkles,
   ArrowRight,
   X,
   AlertCircle,
@@ -15,6 +13,22 @@ import {
   Wrench,
   CheckCircle2,
 } from "lucide-react";
+
+/** Branded PaySight monogram avatar used in place of generic AI icons. */
+function AssistantAvatar({ size = "sm" }: { size?: "sm" | "lg" }) {
+  return (
+    <div
+      className={
+        size === "lg"
+          ? "w-8 h-8 rounded-lg bg-[#FFF3EB] border border-[#FED7AA] flex items-center justify-center text-[#C2410C] font-black text-sm select-none flex-shrink-0"
+          : "w-7 h-7 bg-[#FFF3EB] border border-[#FED7AA] rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 text-[#C2410C] font-black text-xs select-none"
+      }
+      aria-hidden="true"
+    >
+      P
+    </div>
+  );
+}
 
 const SUGGESTED_PROMPTS = [
   "Summarise my payments for the last 30 days.",
@@ -251,9 +265,7 @@ export function ChatPanel({
     <div className="bg-white border-l border-[#E5E5E5] flex flex-col h-full overflow-hidden shadow-2xl">
       <div className="px-5 py-3.5 border-b border-[#E5E5E5] flex items-center justify-between flex-shrink-0 bg-white">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-[#FFF3EB] border border-[#FED7AA] flex items-center justify-center text-[#C2410C]">
-            <Sparkles className="w-4 h-4" />
-          </div>
+          <AssistantAvatar size="lg" />
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-sm font-semibold text-[#171717]">Ask PaySight</h2>
@@ -290,9 +302,7 @@ export function ChatPanel({
         {messages.length === 0 ? (
           <div className="space-y-4 py-2">
             <div className="flex items-start gap-2.5">
-              <div className="w-7 h-7 bg-[#FFF3EB] border border-[#FED7AA] rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 text-[#C2410C]">
-                <Bot className="w-3.5 h-3.5" />
-              </div>
+              <AssistantAvatar />
               <div className="bg-[#F7F7F8] border border-[#E5E5E5] rounded-xl rounded-tl-sm p-3.5 text-xs text-[#171717] leading-relaxed break-words">
                 Welcome to <strong>PaySight Copilot</strong>. All figures come strictly from
                 server-side PayPal ledger, Budget Intelligence, and Channel3 tools.
@@ -329,19 +339,13 @@ export function ChatPanel({
                 msg.role === "user" ? "flex-row-reverse" : ""
               }`}
             >
-              <div
-                className={`w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                  msg.role === "user"
-                    ? "bg-[#111111] text-white"
-                    : "bg-[#FFF3EB] border border-[#FED7AA] text-[#C2410C]"
-                }`}
-              >
-                {msg.role === "user" ? (
+              {msg.role === "user" ? (
+                <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 bg-[#111111] text-white">
                   <User className="w-3.5 h-3.5" />
-                ) : (
-                  <Bot className="w-3.5 h-3.5" />
-                )}
-              </div>
+                </div>
+              ) : (
+                <AssistantAvatar />
+              )}
 
               <div
                 className={`p-3.5 rounded-xl text-xs max-w-[85%] break-words space-y-2 ${
@@ -382,9 +386,7 @@ export function ChatPanel({
 
         {isLoading && (
           <div className="flex items-start gap-2.5">
-            <div className="w-7 h-7 bg-[#FFF3EB] border border-[#FED7AA] rounded-full flex items-center justify-center flex-shrink-0 text-[#C2410C]">
-              <Bot className="w-3.5 h-3.5" />
-            </div>
+            <AssistantAvatar />
             <div className="bg-[#F7F7F8] border border-[#E5E5E5] rounded-xl rounded-tl-sm px-4 py-3 flex items-center gap-2">
               <Loader2 className="w-3.5 h-3.5 text-[#C2410C] animate-spin" />
               <span className="text-xs text-[#626262]">
