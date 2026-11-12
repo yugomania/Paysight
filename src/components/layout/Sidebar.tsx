@@ -12,6 +12,7 @@ import {
   User,
   Wallet,
 } from "lucide-react";
+import { SignOutButton } from "@/components/auth/SignOutButton";
 
 export type NavTab =
   | "overview"
@@ -242,16 +243,19 @@ export function Sidebar({
               </span>
             </div>
           </div>
-          <a
-            href="https://github.com/yugomania/Paysight"
-            target="_blank"
-            rel="noopener noreferrer"
-            title="View PaySight GitHub Repository"
-            className="text-[#737373] hover:text-white p-1 rounded hover:bg-[#242424] transition-colors"
-            aria-label="PaySight GitHub Repository"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
+          <div className="flex items-center gap-1">
+            <a
+              href="https://github.com/yugomania/Paysight"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="View PaySight GitHub Repository"
+              className="text-[#737373] hover:text-white p-1 rounded hover:bg-[#242424] transition-colors"
+              aria-label="PaySight GitHub Repository"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+            <SignOutButton />
+          </div>
         </div>
       </div>
     </div>

@@ -55,8 +55,8 @@ Interactive browser rendering and popup buyer checkout remain **`BLOCKED`** on t
 |---|---|---|---|
 | `npm run lint` | Automated static check | **PASS** | ESLint 9 across `src/` & `tests/`, 0 errors |
 | `npx tsc --noEmit` | Automated type check | **PASS** | TypeScript strict mode (`strict: true`), 0 errors |
-| `npm test` (`tsx --test`) | `Unit tested` + `Mock integration tested` | **PASS (41/41)** | All 8 test suites in `tests/` using isolated `os.tmpdir()` `PAYSIGHT_DB_PATH`; PayPal/Channel3 live HTTP calls mocked in unit specs |
-| `npm run build` | Production build | **PASS** | Next.js `16.4.2` Turbopack production bundle & static/dynamic route compilation |
+| `npm test` (`tsx --test`) | `Unit tested` + `Mock integration tested` | **PASS (65/65)** | All 9 test suites in `tests/` using isolated `os.tmpdir()` `PAYSIGHT_DB_PATH`; PayPal/Channel3 live HTTP calls mocked in unit specs; includes comprehensive auth & open-redirect tests |
+| `npm run build` | Production build | **PASS** | Next.js `16.4.2` Turbopack production bundle & static/dynamic route compilation (`/`, `/auth/login`, `/auth/signup`, `/auth/callback`, `/dashboard`) |
 
 ### 2. Local Built-Server Smoke Verification (`next start` inside Sandbox)
 | Check | Evidence Class | Result | Observed Output |

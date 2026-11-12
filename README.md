@@ -14,7 +14,11 @@ PaySight serves **PayPal merchants, digital sellers, and finance operators** who
 
 ## Product Overview & Core Features
 
-1. **PayPal Analytics & Settlement KPIs**:
+1. **Public Marketing Landing Page & Supabase Authentication**:
+   - High-conversion public fintech landing page (`/`) showcasing PaySight capabilities without requiring authentication.
+   - Supabase SSR email/password authentication (`/auth/login`, `/auth/signup`, `/auth/callback`) with session refresh proxy/middleware and open-redirect protection.
+   - Protected merchant dashboard layout (`/dashboard`) with server-side authentication guard and seamless sign-out.
+2. **PayPal Analytics & Settlement KPIs**:
    - Server-calculated 30-day **Net Volume**, **Gross Volume**, **PayPal Fees**, **Settled Orders**, **Average Order Value (AOV)**, **Refunds**, and **Dispute Rate** with strict currency separation (`USD`, `EUR`, etc. are never summed together) and an Overview currency selector.
    - Multi-currency summary strip for unconverted secondary currencies.
    - `7 Days` / `30 Days` / `90 Days` **Settlement Velocity** chart (`Recharts`) with computed half-over-half window trend badges.
